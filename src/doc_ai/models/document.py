@@ -1,5 +1,6 @@
-from pydantic import BaseModel
 from time import datetime
+
+from pydantic import BaseModel
 
 
 class Document(BaseModel):
