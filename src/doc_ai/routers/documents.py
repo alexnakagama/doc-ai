@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, UploadFile
 
 from doc_ai.interfaces.document_service import DocumentServiceInterface
 from doc_ai.interfaces.pdf_service import PDFServiceInterface
+from doc_ai.schemas.document import DocumentResponse
 from doc_ai.services.document_service import DocumentService
 from doc_ai.services.pdf_service import PDFService
 
@@ -31,7 +32,7 @@ async def get_documents(service: DocumentServiceDependency):
     return await service.get_documents()
 
 
-@router.post("/documents")
+@router.post("/documents", response_model=DocumentResponse)
 async def upload_document(
     file: UploadFile,
     service: DocumentServiceDependency,
