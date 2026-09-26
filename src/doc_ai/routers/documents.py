@@ -16,7 +16,7 @@ def get_pdf_service() -> PDFServiceInterface:
 
 
 def get_document_service(
-    pdf_service: PDFServiceInterface,
+    pdf_service: Annotated[PDFServiceInterface, Depends(get_pdf_service)],
 ) -> DocumentServiceInterface:
     return DocumentService(pdf_service)
 

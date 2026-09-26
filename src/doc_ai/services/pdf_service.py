@@ -1,4 +1,4 @@
-import fitz
+import pymupdf
 
 
 class PDFService:
@@ -6,7 +6,7 @@ class PDFService:
         self,
         file_path: str,
     ) -> str:
-        document = fitz.open(file_path)
+        document = pymupdf.open(file_path)
 
         text = ""
 
