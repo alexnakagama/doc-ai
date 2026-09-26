@@ -7,5 +7,6 @@ class DocumentResponse(BaseModel):
 
 
 class DocumentDetailResponse(DocumentResponse):
+    id: int
+    filename: str
     content: str
-    created_at: str
