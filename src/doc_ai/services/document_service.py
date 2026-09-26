@@ -1,4 +1,5 @@
 import tempfile
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import UploadFile
@@ -31,6 +32,7 @@ class DocumentService:
             id=len(self.documents) + 1,
             filename=file.filename or "unknown file",
             content=text,
+            created_at=datetime.now(UTC),
         )
 
         self.documents.append(document)
