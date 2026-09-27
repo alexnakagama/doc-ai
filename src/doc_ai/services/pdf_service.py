@@ -9,15 +9,16 @@ class PDFService:
         file_path: str,
     ) -> str:
         try:
-            with pymupdf.open(file_path) as document:
-                text = ""
+            document = pymupdf.open(file_path)
 
-                for page in document:
-                    text += page.get_text()
+            text = ""
 
-                document.close()
+            for page in document:
+                text += page.get_text()
 
-                return text
+            document.close()
+
+            return text
 
         except pymupdf.FileDataError as error:
             raise InvalidPDFError("Invalid PDF file") from error
