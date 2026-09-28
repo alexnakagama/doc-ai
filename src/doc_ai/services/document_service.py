@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import UploadFile
 
+from doc_ai.core.config import settings
 from doc_ai.exceptions.document import EmptyFileError
 from doc_ai.interfaces.pdf_service import PDFServiceInterface
 from doc_ai.models.document import Document
@@ -22,6 +23,9 @@ class DocumentService:
 
         if not content:
             raise EmptyFileError("File is empty")
+
+        if len(settings) > settings.max_file_size:
+            raise ValueError("File is too large")
 
         file_path: Path | None = None
 
