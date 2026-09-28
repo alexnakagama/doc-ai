@@ -24,24 +24,33 @@ class DocumentService:
         if not content:
             raise EmptyFileError("File is empty")
 
-        if len(settings) > settings.max_file_size:
+        if len(content) > settings.max_file_size:
             raise ValueError("File is too large")
+
+        filename = file.filename or "unknown file"
+        extension = Path(filename).suffix.lower()
+
+        if extension not in settings.allowed_file_types:
+            raise ValueError("File type is not allowed")
 
         file_path: Path | None = None
 
         try:
             with tempfile.NamedTemporaryFile(
                 delete=False,
-                suffix=".pdf",
+                suffix=extension,
             ) as temp_file:
                 temp_file.write(content)
                 file_path = Path(temp_file.name)
 
-            text = await self.pdf_service.extract_text(str(file_path))
+            if extension == ".pdf":
+                text = await self.pdf_service.extract_text(str(file_path))
+            else:
+                text = await self.text_service.extract_text(str(file_path))
 
             document = Document(
                 id=len(self.documents) + 1,
-                filename=file.filename or "unknown file",
+                filename=file.filename,
                 content=text,
                 created_at=datetime.now(UTC),
             )
