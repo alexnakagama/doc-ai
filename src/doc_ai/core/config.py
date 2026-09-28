@@ -1,7 +1,18 @@
+import os
+
+
 class Settings:
     def __init__(self):
         self.max_file_size = 10 * 1024 * 1024
         self.allowed_file_types = {".pdf", ".txt"}
+        self.chunk_size = int(os.getenv("CHUNK_SIZE", "1000"))
+        self.chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "200"))
+
+        if self.chunk_size <= 0:
+            raise ValueError("CHUNK_SIZE must be greater than 0")
+
+        if not 0 <= self.chunk_overlap < self.chunk_size:
+            raise ValueError("CHUNK_OVERLAP must be >= 0 and less than CHUNK_SIZE")
 
 
 settings = Settings()

@@ -1,14 +1,17 @@
 from io import BytesIO
 
+import pymupdf
 import pytest
 from fastapi import UploadFile
 
 from doc_ai.core.config import settings
 from doc_ai.exceptions.document import (
+    DocumentNotFoundError,
     EmptyFileError,
     FileTooLargeError,
     UnsupportedFileTypeError,
 )
+from doc_ai.services.chunking_service import ChunkingService
 from doc_ai.services.document_service import DocumentService
 from doc_ai.services.pdf_service import PDFService
 from doc_ai.services.text_service import TextService
@@ -17,7 +20,11 @@ pytestmark = pytest.mark.anyio
 
 
 def make_service() -> DocumentService:
-    return DocumentService(PDFService(), TextService())
+    return DocumentService(
+        PDFService(),
+        TextService(),
+        ChunkingService(chunk_size=50, chunk_overlap=10),
+    )
 
 
 def make_upload(filename: str, content: bytes) -> UploadFile:
@@ -51,3 +58,45 @@ async def test_oversized_file_raises_file_too_large(monkeypatch):
 async def test_disallowed_extension_raises_unsupported_file_type():
     with pytest.raises(UnsupportedFileTypeError):
         await make_service().create_document(make_upload("report.docx", b"data"))
+
+
+def make_pdf_bytes(page_texts: list[str]) -> bytes:
+    document = pymupdf.open()
+    for text in page_texts:
+        document.new_page().insert_text((72, 72), text)
+    content = document.tobytes()
+    document.close()
+    return content
+
+
+async def test_txt_upload_stores_chunks_for_the_document():
+    service = make_service()
+    text = " ".join(f"word{i}" for i in range(40))
+
+    document = await service.create_document(
+        make_upload("notes.txt", text.encode("utf-8"))
+    )
+    chunks = await service.get_chunks(document.id)
+
+    assert len(chunks) > 1
+    assert all(chunk.document_id == document.id for chunk in chunks)
+    assert all(chunk.page_number is None for chunk in chunks)
+
+
+async def test_pdf_upload_stores_page_numbered_chunks():
+    service = make_service()
+
+    document = await service.create_document(
+        make_upload("report.pdf", make_pdf_bytes(["first page", "second page"]))
+    )
+    chunks = await service.get_chunks(document.id)
+
+    assert [(chunk.page_number, chunk.content) for chunk in chunks] == [
+        (1, "first page"),
+        (2, "second page"),
+    ]
+
+
+async def test_get_chunks_for_unknown_document_raises_not_found():
+    with pytest.raises(DocumentNotFoundError):
+        await make_service().get_chunks(999)

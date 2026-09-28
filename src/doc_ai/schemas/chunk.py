@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 
 
-class Chunk(BaseModel):
+class ChunkResponse(BaseModel):
     id: str
     document_id: int
     chunk_index: int

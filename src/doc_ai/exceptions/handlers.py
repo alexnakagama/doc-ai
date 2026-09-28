@@ -2,6 +2,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from doc_ai.exceptions.document import (
+    DocumentNotFoundError,
     EmptyFileError,
     FileTooLargeError,
     UnsupportedFileTypeError,
@@ -34,3 +35,9 @@ async def unsupported_encoding_handler(
     request: Request, error: UnsupportedEncodingError
 ) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(error)})
+
+
+async def document_not_found_handler(
+    request: Request, error: DocumentNotFoundError
+) -> JSONResponse:
+    return JSONResponse(status_code=404, content={"detail": str(error)})

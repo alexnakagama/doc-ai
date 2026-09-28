@@ -8,3 +8,7 @@ class FileTooLargeError(Exception):
 
 class UnsupportedFileTypeError(Exception):
     pass
+
+
+class DocumentNotFoundError(Exception):
+    pass

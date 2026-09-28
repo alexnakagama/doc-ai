@@ -6,13 +6,17 @@ from fastapi import UploadFile
 
 from doc_ai.core.config import settings
 from doc_ai.exceptions.document import (
+    DocumentNotFoundError,
     EmptyFileError,
     FileTooLargeError,
     UnsupportedFileTypeError,
 )
+from doc_ai.interfaces.chunking_service import ChunkingServiceInterface
 from doc_ai.interfaces.pdf_service import PDFServiceInterface
 from doc_ai.interfaces.text_service import TextServiceInterface
+from doc_ai.models.chunk import Chunk
 from doc_ai.models.document import Document
+from doc_ai.models.page import PageText
 
 
 class DocumentService:
@@ -20,13 +24,22 @@ class DocumentService:
         self,
         pdf_service: PDFServiceInterface,
         text_service: TextServiceInterface,
+        chunking_service: ChunkingServiceInterface,
     ):
         self.documents: list[Document] = []
+        self.chunks: dict[int, list[Chunk]] = {}
         self.pdf_service = pdf_service
         self.text_service = text_service
+        self.chunking_service = chunking_service
 
     async def get_documents(self) -> list[Document]:
         return self.documents
+
+    async def get_chunks(self, document_id: int) -> list[Chunk]:
+        if document_id not in self.chunks:
+            raise DocumentNotFoundError("Document not found")
+
+        return self.chunks[document_id]
 
     async def create_document(self, file: UploadFile) -> Document:
         content = await file.read()
@@ -54,19 +67,23 @@ class DocumentService:
                 file_path = Path(temp_file.name)
 
             if extension == ".pdf":
-                text = await self.pdf_service.extract_text(str(file_path))
+                pages = await self.pdf_service.extract_pages(str(file_path))
             else:
                 encoding = await self.text_service.detect_encoding(str(file_path))
                 text = await self.text_service.extract_text(str(file_path), encoding)
+                pages = [PageText(page_number=None, text=text)]
 
             document = Document(
                 id=len(self.documents) + 1,
                 filename=filename,
-                content=text,
+                content="\n\n".join(page.text for page in pages),
                 created_at=datetime.now(UTC),
             )
 
+            chunks = await self.chunking_service.chunk(document, pages)
+
             self.documents.append(document)
+            self.chunks[document.id] = chunks
 
             return document
 
