@@ -7,6 +7,8 @@ class Settings:
         self.allowed_file_types = {".pdf", ".txt"}
         self.chunk_size = int(os.getenv("CHUNK_SIZE", "1000"))
         self.chunk_overlap = int(os.getenv("CHUNK_OVERLAP", "200"))
+        self.embedding_model = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
 
         if self.chunk_size <= 0:
             raise ValueError("CHUNK_SIZE must be greater than 0")

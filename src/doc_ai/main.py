@@ -6,8 +6,10 @@ from doc_ai.exceptions.document import (
     FileTooLargeError,
     UnsupportedFileTypeError,
 )
+from doc_ai.exceptions.embedding import EmbeddingError
 from doc_ai.exceptions.handlers import (
     document_not_found_handler,
+    embedding_error_handler,
     empty_file_handler,
     file_too_large_handler,
     invalid_pdf_handler,
@@ -31,5 +33,7 @@ app.add_exception_handler(UnsupportedFileTypeError, unsupported_file_type_handle
 app.add_exception_handler(UnsupportedEncodingError, unsupported_encoding_handler)
 
 app.add_exception_handler(DocumentNotFoundError, document_not_found_handler)
+
+app.add_exception_handler(EmbeddingError, embedding_error_handler)
 
 app.include_router(documents_router)

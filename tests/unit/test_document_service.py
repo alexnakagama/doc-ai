@@ -1,8 +1,10 @@
+import asyncio
 from io import BytesIO
 
 import pymupdf
 import pytest
 from fastapi import UploadFile
+from langchain_core.embeddings import DeterministicFakeEmbedding, Embeddings
 
 from doc_ai.core.config import settings
 from doc_ai.exceptions.document import (
@@ -11,19 +13,38 @@ from doc_ai.exceptions.document import (
     FileTooLargeError,
     UnsupportedFileTypeError,
 )
+from doc_ai.exceptions.embedding import EmbeddingError
 from doc_ai.services.chunking_service import ChunkingService
 from doc_ai.services.document_service import DocumentService
+from doc_ai.services.embedding_service import EmbeddingService
 from doc_ai.services.pdf_service import PDFService
 from doc_ai.services.text_service import TextService
 
 pytestmark = pytest.mark.anyio
 
 
-def make_service() -> DocumentService:
+class FailingEmbeddings(Embeddings):
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("provider is down")
+
+    def embed_query(self, text: str) -> list[float]:
+        raise RuntimeError("provider is down")
+
+
+class SlowEmbeddings(DeterministicFakeEmbedding):
+    async def aembed_documents(self, texts: list[str]) -> list[list[float]]:
+        await asyncio.sleep(0.05)
+        return self.embed_documents(texts)
+
+
+def make_service(embeddings: Embeddings | None = None) -> DocumentService:
     return DocumentService(
         PDFService(),
         TextService(),
         ChunkingService(chunk_size=50, chunk_overlap=10),
+        EmbeddingService(
+            embeddings or DeterministicFakeEmbedding(size=8), model="fake-model"
+        ),
     )
 
 
@@ -100,3 +121,48 @@ async def test_pdf_upload_stores_page_numbered_chunks():
 async def test_get_chunks_for_unknown_document_raises_not_found():
     with pytest.raises(DocumentNotFoundError):
         await make_service().get_chunks(999)
+
+
+async def test_upload_stores_an_embedding_for_each_chunk():
+    service = make_service()
+    text = " ".join(f"word{i}" for i in range(40))
+
+    document = await service.create_document(
+        make_upload("notes.txt", text.encode("utf-8"))
+    )
+    chunks = await service.get_chunks(document.id)
+    embeddings = await service.get_embeddings(document.id)
+
+    assert [embedding.chunk_id for embedding in embeddings] == [
+        chunk.id for chunk in chunks
+    ]
+    assert all(len(embedding.vector) == 8 for embedding in embeddings)
+
+
+async def test_embedding_failure_stores_nothing():
+    service = make_service(FailingEmbeddings())
+
+    with pytest.raises(EmbeddingError):
+        await service.create_document(make_upload("notes.txt", b"some text"))
+
+    assert await service.get_documents() == []
+    with pytest.raises(DocumentNotFoundError):
+        await service.get_chunks(1)
+
+
+async def test_get_embeddings_for_unknown_document_raises_not_found():
+    with pytest.raises(DocumentNotFoundError):
+        await make_service().get_embeddings(999)
+
+
+async def test_concurrent_uploads_get_distinct_ids():
+    service = make_service(SlowEmbeddings(size=8))
+
+    first, second = await asyncio.gather(
+        service.create_document(make_upload("a.txt", b"first file")),
+        service.create_document(make_upload("b.txt", b"second file")),
+    )
+
+    assert first.id != second.id
+    assert (await service.get_chunks(first.id))[0].content == "first file"
+    assert (await service.get_chunks(second.id))[0].content == "second file"

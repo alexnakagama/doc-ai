@@ -1,3 +1,4 @@
+import itertools
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,10 +13,12 @@ from doc_ai.exceptions.document import (
     UnsupportedFileTypeError,
 )
 from doc_ai.interfaces.chunking_service import ChunkingServiceInterface
+from doc_ai.interfaces.embedding_service import EmbeddingServiceInterface
 from doc_ai.interfaces.pdf_service import PDFServiceInterface
 from doc_ai.interfaces.text_service import TextServiceInterface
 from doc_ai.models.chunk import Chunk
 from doc_ai.models.document import Document
+from doc_ai.models.embedding import ChunkEmbedding
 from doc_ai.models.page import PageText
 
 
@@ -25,12 +28,16 @@ class DocumentService:
         pdf_service: PDFServiceInterface,
         text_service: TextServiceInterface,
         chunking_service: ChunkingServiceInterface,
+        embedding_service: EmbeddingServiceInterface,
     ):
         self.documents: list[Document] = []
         self.chunks: dict[int, list[Chunk]] = {}
+        self.embeddings: dict[int, list[ChunkEmbedding]] = {}
+        self.document_ids = itertools.count(1)
         self.pdf_service = pdf_service
         self.text_service = text_service
         self.chunking_service = chunking_service
+        self.embedding_service = embedding_service
 
     async def get_documents(self) -> list[Document]:
         return self.documents
@@ -40,6 +47,12 @@ class DocumentService:
             raise DocumentNotFoundError("Document not found")
 
         return self.chunks[document_id]
+
+    async def get_embeddings(self, document_id: int) -> list[ChunkEmbedding]:
+        if document_id not in self.embeddings:
+            raise DocumentNotFoundError("Document not found")
+
+        return self.embeddings[document_id]
 
     async def create_document(self, file: UploadFile) -> Document:
         content = await file.read()
@@ -74,16 +87,18 @@ class DocumentService:
                 pages = [PageText(page_number=None, text=text)]
 
             document = Document(
-                id=len(self.documents) + 1,
+                id=next(self.document_ids),
                 filename=filename,
                 content="\n\n".join(page.text for page in pages),
                 created_at=datetime.now(UTC),
             )
 
             chunks = await self.chunking_service.chunk(document, pages)
+            embeddings = await self.embedding_service.embed_chunks(chunks)
 
             self.documents.append(document)
             self.chunks[document.id] = chunks
+            self.embeddings[document.id] = embeddings
 
             return document
 

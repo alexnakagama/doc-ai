@@ -33,3 +33,23 @@ def test_invalid_chunk_settings_raise(monkeypatch, chunk_size, chunk_overlap):
 
     with pytest.raises(ValueError):
         Settings()
+
+
+def test_embedding_settings_have_defaults(monkeypatch):
+    monkeypatch.delenv("EMBEDDING_MODEL", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    settings = Settings()
+
+    assert settings.embedding_model == "text-embedding-3-small"
+    assert settings.openai_api_key is None
+
+
+def test_embedding_settings_read_from_env(monkeypatch):
+    monkeypatch.setenv("EMBEDDING_MODEL", "text-embedding-3-large")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    settings = Settings()
+
+    assert settings.embedding_model == "text-embedding-3-large"
+    assert settings.openai_api_key == "sk-test"
