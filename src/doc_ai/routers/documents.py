@@ -6,12 +6,14 @@ from doc_ai.interfaces.document_service import DocumentServiceInterface
 from doc_ai.schemas.document import DocumentResponse
 from doc_ai.services.document_service import DocumentService
 from doc_ai.services.pdf_service import PDFService
+from doc_ai.services.text_service import TextService
 
 router = APIRouter()
 
 
 pdf_service = PDFService()
-document_service = DocumentService(pdf_service)
+text_service = TextService()
+document_service = DocumentService(pdf_service, text_service)
 
 
 def get_document_service() -> DocumentServiceInterface:

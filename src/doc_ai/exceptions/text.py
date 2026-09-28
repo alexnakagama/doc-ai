@@ -1,0 +1,2 @@
+class UnsupportedEncodingError(Exception):
+    pass

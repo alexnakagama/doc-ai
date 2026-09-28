@@ -1,8 +1,13 @@
 from fastapi import Request
 from fastapi.responses import JSONResponse
 
-from doc_ai.exceptions.document import EmptyFileError
+from doc_ai.exceptions.document import (
+    EmptyFileError,
+    FileTooLargeError,
+    UnsupportedFileTypeError,
+)
 from doc_ai.exceptions.pdf import InvalidPDFError
+from doc_ai.exceptions.text import UnsupportedEncodingError
 
 
 async def empty_file_handler(request: Request, error: EmptyFileError) -> JSONResponse:
@@ -10,4 +15,22 @@ async def empty_file_handler(request: Request, error: EmptyFileError) -> JSONRes
 
 
 async def invalid_pdf_handler(request: Request, error: InvalidPDFError) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"detail": str(error)})
+
+
+async def file_too_large_handler(
+    request: Request, error: FileTooLargeError
+) -> JSONResponse:
+    return JSONResponse(status_code=413, content={"detail": str(error)})
+
+
+async def unsupported_file_type_handler(
+    request: Request, error: UnsupportedFileTypeError
+) -> JSONResponse:
+    return JSONResponse(status_code=415, content={"detail": str(error)})
+
+
+async def unsupported_encoding_handler(
+    request: Request, error: UnsupportedEncodingError
+) -> JSONResponse:
     return JSONResponse(status_code=400, content={"detail": str(error)})
