@@ -192,6 +192,7 @@ dependencies = [
     { name = "fastapi" },
     { name = "langchain-openai" },
     { name = "langchain-text-splitters" },
+    { name = "numpy" },
     { name = "pymupdf" },
     { name = "python-multipart" },
     { name = "uvicorn" },
@@ -199,7 +200,6 @@ dependencies = [
 
 [package.dev-dependencies]
 dev = [
-    { name = "numpy" },
     { name = "pytest" },
 ]
 
@@ -208,16 +208,14 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "langchain-openai", specifier = ">=1.6.6" },
     { name = "langchain-text-splitters", specifier = ">=1.1.2" },
+    { name = "numpy", specifier = ">=2.5.3" },
     { name = "pymupdf", specifier = ">=1.28.2" },
     { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "uvicorn", specifier = ">=0.54.0" },
 ]
 
 [package.metadata.requires-dev]
-dev = [
-    { name = "numpy", specifier = ">=2.5.3" },
-    { name = "pytest", specifier = ">=9.1.1" },
-]
+dev = [{ name = "pytest", specifier = ">=9.1.1" }]
 
 [[package]]
 name = "fastapi"

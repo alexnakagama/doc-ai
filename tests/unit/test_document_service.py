@@ -14,11 +14,14 @@ from doc_ai.exceptions.document import (
     UnsupportedFileTypeError,
 )
 from doc_ai.exceptions.embedding import EmbeddingError
+from doc_ai.models.chunk import Chunk
+from doc_ai.models.embedding import ChunkEmbedding
 from doc_ai.services.chunking_service import ChunkingService
 from doc_ai.services.document_service import DocumentService
 from doc_ai.services.embedding_service import EmbeddingService
 from doc_ai.services.pdf_service import PDFService
 from doc_ai.services.text_service import TextService
+from doc_ai.services.vector_store import InMemoryVectorStore
 
 pytestmark = pytest.mark.anyio
 
@@ -37,7 +40,10 @@ class SlowEmbeddings(DeterministicFakeEmbedding):
         return self.embed_documents(texts)
 
 
-def make_service(embeddings: Embeddings | None = None) -> DocumentService:
+def make_service(
+    embeddings: Embeddings | None = None,
+    vector_store: InMemoryVectorStore | None = None,
+) -> DocumentService:
     return DocumentService(
         PDFService(),
         TextService(),
@@ -45,6 +51,7 @@ def make_service(embeddings: Embeddings | None = None) -> DocumentService:
         EmbeddingService(
             embeddings or DeterministicFakeEmbedding(size=8), model="fake-model"
         ),
+        vector_store or InMemoryVectorStore(),
     )
 
 
@@ -139,8 +146,29 @@ async def test_upload_stores_an_embedding_for_each_chunk():
     assert all(len(embedding.vector) == 8 for embedding in embeddings)
 
 
+async def test_upload_makes_chunks_searchable():
+    vector_store = InMemoryVectorStore()
+    service = make_service(vector_store=vector_store)
+    text = " ".join(f"word{i}" for i in range(40))
+
+    document = await service.create_document(
+        make_upload("notes.txt", text.encode("utf-8"))
+    )
+    chunks = await service.get_chunks(document.id)
+    embeddings = await service.get_embeddings(document.id)
+
+    results = await vector_store.search(
+        embeddings[1].vector, k=len(chunks), document_id=document.id
+    )
+
+    assert results[0].chunk == chunks[1]
+    assert results[0].score == pytest.approx(1.0, abs=1e-6)
+    assert {result.chunk.id for result in results} == {chunk.id for chunk in chunks}
+
+
 async def test_embedding_failure_stores_nothing():
-    service = make_service(FailingEmbeddings())
+    vector_store = InMemoryVectorStore()
+    service = make_service(FailingEmbeddings(), vector_store)
 
     with pytest.raises(EmbeddingError):
         await service.create_document(make_upload("notes.txt", b"some text"))
@@ -148,6 +176,34 @@ async def test_embedding_failure_stores_nothing():
     assert await service.get_documents() == []
     with pytest.raises(DocumentNotFoundError):
         await service.get_chunks(1)
+    assert await vector_store.search([1.0] * 8, k=1) == []
+
+
+async def test_vector_store_rejection_stores_nothing():
+    vector_store = InMemoryVectorStore()
+    existing = Chunk(
+        id="existing",
+        document_id=0,
+        chunk_index=0,
+        content="stored by another model",
+        filename="old.txt",
+        page_number=None,
+        start_index=0,
+    )
+    await vector_store.add(
+        [existing],
+        [ChunkEmbedding(chunk_id="existing", vector=[1.0] * 8, model="other-model")],
+    )
+    service = make_service(vector_store=vector_store)
+
+    with pytest.raises(ValueError, match="model"):
+        await service.create_document(make_upload("notes.txt", b"some text"))
+
+    assert await service.get_documents() == []
+    with pytest.raises(DocumentNotFoundError):
+        await service.get_chunks(1)
+    results = await vector_store.search([1.0] * 8, k=5)
+    assert [result.chunk for result in results] == [existing]
 
 
 async def test_get_embeddings_for_unknown_document_raises_not_found():
@@ -156,7 +212,8 @@ async def test_get_embeddings_for_unknown_document_raises_not_found():
 
 
 async def test_concurrent_uploads_get_distinct_ids():
-    service = make_service(SlowEmbeddings(size=8))
+    vector_store = InMemoryVectorStore()
+    service = make_service(SlowEmbeddings(size=8), vector_store)
 
     first, second = await asyncio.gather(
         service.create_document(make_upload("a.txt", b"first file")),
@@ -166,3 +223,7 @@ async def test_concurrent_uploads_get_distinct_ids():
     assert first.id != second.id
     assert (await service.get_chunks(first.id))[0].content == "first file"
     assert (await service.get_chunks(second.id))[0].content == "second file"
+    for document in (first, second):
+        [chunk] = await service.get_chunks(document.id)
+        results = await vector_store.search([1.0] * 8, k=5, document_id=document.id)
+        assert [result.chunk for result in results] == [chunk]

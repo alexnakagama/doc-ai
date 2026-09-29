@@ -9,16 +9,19 @@ from doc_ai.services.document_service import DocumentService
 from doc_ai.services.embedding_service import create_openai_embedding_service
 from doc_ai.services.pdf_service import PDFService
 from doc_ai.services.text_service import TextService
+from doc_ai.services.vector_store import InMemoryVectorStore
 
 pdf_service = PDFService()
 text_service = TextService()
 chunking_service = ChunkingService(settings.chunk_size, settings.chunk_overlap)
 embedding_service = create_openai_embedding_service(settings)
+vector_store = InMemoryVectorStore()
 document_service = DocumentService(
     pdf_service,
     text_service,
     chunking_service,
     embedding_service,
+    vector_store,
 )
 
 

@@ -21,7 +21,9 @@ Upload flow (`DocumentService.create_document`): validate → extract → chunk 
 - Extraction normalizes everything to `list[PageText]`: PDFs give one per page (numbered
   from 1), `.txt` gives a single one with `page_number=None`. Chunking consumes only this.
 - The document, its chunks and its embeddings are stored together at the very end, so a
-  failure at any step leaves nothing behind. Keep it that way.
+  failure at any step leaves nothing behind. Keep it that way. `vector_store.add` is the
+  first step of that final commit because it validates and can raise; it inserts all or
+  nothing, and nothing after it awaits.
 - Storage is in memory on `DocumentService`: `documents` list plus `chunks` and `embeddings`
   dicts keyed by document id. Ids come from `itertools.count`. Don't go back to
   `len(documents) + 1`: it races across the embedding await (covered by a concurrency test).
@@ -42,7 +44,13 @@ Layering:
   It must not require `OPENAI_API_KEY`, because the tests import it; the key is checked in
   the embedding factory instead. Invalid chunk settings raise at startup.
 
-Not built yet: retrieval, vector store, LLM Q&A. `schemas/question.py` and
+Vector store (`services/vector_store.py`, `InMemoryVectorStore`): exact cosine search
+with NumPy (a runtime dependency) over the precomputed `ChunkEmbedding`s; it never embeds
+text and doesn't use LangChain. Vectors are normalized to float32 on add; equal scores keep
+insertion order. Invalid input (id/model/dimension mismatch, duplicate ids, empty, zero or
+non-finite vectors, `k <= 0`) raises `ValueError`.
+
+Not built yet: query embedding / retrieval service, LLM Q&A. `schemas/question.py` and
 `DocumentDetailResponse` are unused placeholders for that.
 
 ## Testing conventions
@@ -50,7 +58,7 @@ Not built yet: retrieval, vector store, LLM Q&A. `schemas/question.py` and
 - Async tests use `pytestmark = pytest.mark.anyio` (the anyio plugin ships with FastAPI;
   there is no pytest-asyncio).
 - Tests use real services rather than mocks. Embeddings use LangChain's
-  `DeterministicFakeEmbedding` (needs the `numpy` dev dependency) or small `Embeddings`
+  `DeterministicFakeEmbedding` or small `Embeddings`
   subclasses defined in the test file. PDFs are generated inside tests with pymupdf.
 - There are no HTTP-level tests (`httpx` isn't installed). Exception handlers are tested by
   calling the handler functions directly.

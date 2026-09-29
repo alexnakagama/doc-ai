@@ -16,6 +16,7 @@ from doc_ai.interfaces.chunking_service import ChunkingServiceInterface
 from doc_ai.interfaces.embedding_service import EmbeddingServiceInterface
 from doc_ai.interfaces.pdf_service import PDFServiceInterface
 from doc_ai.interfaces.text_service import TextServiceInterface
+from doc_ai.interfaces.vector_store import VectorStoreInterface
 from doc_ai.models.chunk import Chunk
 from doc_ai.models.document import Document
 from doc_ai.models.embedding import ChunkEmbedding
@@ -29,6 +30,7 @@ class DocumentService:
         text_service: TextServiceInterface,
         chunking_service: ChunkingServiceInterface,
         embedding_service: EmbeddingServiceInterface,
+        vector_store: VectorStoreInterface,
     ):
         self.documents: list[Document] = []
         self.chunks: dict[int, list[Chunk]] = {}
@@ -38,6 +40,7 @@ class DocumentService:
         self.text_service = text_service
         self.chunking_service = chunking_service
         self.embedding_service = embedding_service
+        self.vector_store = vector_store
 
     async def get_documents(self) -> list[Document]:
         return self.documents
@@ -96,6 +99,7 @@ class DocumentService:
             chunks = await self.chunking_service.chunk(document, pages)
             embeddings = await self.embedding_service.embed_chunks(chunks)
 
+            await self.vector_store.add(chunks, embeddings)
             self.documents.append(document)
             self.chunks[document.id] = chunks
             self.embeddings[document.id] = embeddings

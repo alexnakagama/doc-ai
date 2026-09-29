@@ -5,8 +5,9 @@ chunks, and turns each chunk into an embedding vector. It is the ingestion half
 of a document question-answering (RAG) system: retrieval and LLM answers are
 planned but not built yet.
 
-Everything is held **in memory**. There is no database and no vector store, so
-all documents, chunks and embeddings are lost when the process stops.
+Everything is held **in memory**, including the vector store. There is no
+database, so all documents, chunks and embeddings are lost when the process
+stops.
 
 ## Contents
 
@@ -50,7 +51,7 @@ flowchart LR
     D --> F[ChunkingService<br/>split each page]
     E --> F
     F --> G[EmbeddingService<br/>one vector per chunk]
-    G --> H[(In-memory store<br/>documents, chunks, embeddings)]
+    G --> H[(In-memory store<br/>documents, chunks, embeddings,<br/>vector store)]
 ```
 
 1. The upload is checked: it must not be empty, must be at most 10 MB, and
@@ -249,6 +250,15 @@ cite results.
 
 Embeddings are kept inside the service and are not exposed through the API.
 
+### SearchResult
+
+Returned by `InMemoryVectorStore.search`. Not exposed through the API yet.
+
+| Field   | Type    | Notes                                                        |
+| ------- | ------- | ------------------------------------------------------------ |
+| `chunk` | `Chunk` | The matching chunk, with its metadata for citations.         |
+| `score` | `float` | Cosine similarity to the query, from -1 to 1 (higher is closer). |
+
 ## Project structure
 
 ```
@@ -264,9 +274,10 @@ src/doc_ai/
 │   ├── pdf_service.py       # PDF text extraction, per page
 │   ├── text_service.py      # .txt encoding detection and reading
 │   ├── chunking_service.py  # LangChain text splitter
-│   └── embedding_service.py # LangChain embeddings + OpenAI factory
+│   ├── embedding_service.py # LangChain embeddings + OpenAI factory
+│   └── vector_store.py      # In-memory cosine-similarity search (NumPy)
 ├── interfaces/              # typing.Protocol interfaces for each service
-├── models/                  # Internal Pydantic models: Document, PageText, Chunk, ChunkEmbedding
+├── models/                  # Internal Pydantic models: Document, PageText, Chunk, ChunkEmbedding, SearchResult
 ├── schemas/                 # API request/response models
 └── exceptions/              # Custom exceptions and their HTTP handlers
 
@@ -290,6 +301,13 @@ tests/unit/                  # pytest unit tests, one file per service plus conf
   `Embeddings` class (for example Ollama or HuggingFace), and calling it from
   `dependencies.py`. `EmbeddingService`, `DocumentService` and the routers stay
   the same.
+- **The vector store never embeds.** `InMemoryVectorStore` receives the
+  `ChunkEmbedding`s that `EmbeddingService` already produced, normalizes them
+  once, and ranks chunks by exact cosine similarity with NumPy. Search takes a
+  query vector, an optional `document_id` filter and `k`; equal scores keep
+  insertion order, so results are deterministic. It rejects mismatched or
+  duplicate chunk ids, mixed models or dimensions, and empty, zero or
+  non-finite vectors with `ValueError`, and a rejected batch stores nothing.
 - **Errors are domain exceptions.** Services raise exceptions such as
   `FileTooLargeError` or `EmbeddingError`; handlers in
   `exceptions/handlers.py` map them to HTTP status codes.
@@ -303,8 +321,7 @@ uv run pytest
 ```
 
 The tests need **no API key and no network access**. Embeddings are
-replaced with LangChain's `DeterministicFakeEmbedding` (this is why `numpy` is
-a dev dependency). Async tests run through the `anyio` pytest plugin that comes
+replaced with LangChain's `DeterministicFakeEmbedding`. Async tests run through the `anyio` pytest plugin that comes
 with FastAPI.
 
 Lint and format check with [Ruff](https://docs.astral.sh/ruff/), run through
@@ -333,7 +350,6 @@ uvx ruff format --check src tests
 
 ## Roadmap
 
-- Store embeddings in a vector store.
 - Semantic retrieval: embed a question with the same model and find the most
   similar chunks.
 - LLM question answering over the retrieved chunks (`QuestionRequest` and
