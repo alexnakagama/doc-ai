@@ -1,9 +1,10 @@
 # doc-ai
 
 A FastAPI service that ingests PDF and plain-text documents, splits them into
-chunks, and turns each chunk into an embedding vector. It is the ingestion half
-of a document question-answering (RAG) system: retrieval and LLM answers are
-planned but not built yet.
+chunks, turns each chunk into an embedding vector, and can retrieve the chunks
+most similar to a question. It is the ingestion and retrieval half of a
+document question-answering (RAG) system: LLM answers are planned but not built
+yet, and retrieval has no HTTP endpoint yet.
 
 Everything is held **in memory**, including the vector store. There is no
 database, so all documents, chunks and embeddings are lost when the process
@@ -118,8 +119,9 @@ Settings are read from environment variables when the app starts
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model name.                                  |
 | `CHUNK_SIZE`      | `1000`                   | Maximum characters per chunk. Must be greater than 0.         |
 | `CHUNK_OVERLAP`   | `200`                    | Characters shared by neighbouring chunks. Must be `>= 0` and less than `CHUNK_SIZE`. |
+| `RETRIEVAL_TOP_K` | `4`                      | Number of chunks retrieved per question. Must be greater than 0. |
 
-Invalid chunk settings stop the app at startup, for example
+Invalid chunk or retrieval settings stop the app at startup, for example
 `ValueError: CHUNK_OVERLAP must be >= 0 and less than CHUNK_SIZE`.
 
 These values are fixed in code and cannot be changed through the environment:
@@ -128,6 +130,7 @@ These values are fixed in code and cannot be changed through the environment:
 | -------------------- | ---------------- |
 | Maximum upload size  | 10 MB            |
 | Allowed extensions   | `.pdf`, `.txt`   |
+| Maximum question length | 2000 characters (after trimming whitespace) |
 
 `CHUNK_SIZE` and `CHUNK_OVERLAP` are measured in **characters**, not tokens.
 
@@ -252,7 +255,8 @@ Embeddings are kept inside the service and are not exposed through the API.
 
 ### SearchResult
 
-Returned by `InMemoryVectorStore.search`. Not exposed through the API yet.
+Returned by `RetrievalService.retrieve` and `InMemoryVectorStore.search`, best
+match first. It contains no vectors. Not exposed through the API yet.
 
 | Field   | Type    | Notes                                                        |
 | ------- | ------- | ------------------------------------------------------------ |
@@ -275,9 +279,10 @@ src/doc_ai/
 │   ├── text_service.py      # .txt encoding detection and reading
 │   ├── chunking_service.py  # LangChain text splitter
 │   ├── embedding_service.py # LangChain embeddings + OpenAI factory
-│   └── vector_store.py      # In-memory cosine-similarity search (NumPy)
+│   ├── vector_store.py      # In-memory cosine-similarity search (NumPy)
+│   └── retrieval_service.py # Question -> query embedding -> top-k chunks
 ├── interfaces/              # typing.Protocol interfaces for each service
-├── models/                  # Internal Pydantic models: Document, PageText, Chunk, ChunkEmbedding, SearchResult
+├── models/                  # Internal Pydantic models: Document, PageText, Chunk, ChunkEmbedding, QueryEmbedding, SearchResult
 ├── schemas/                 # API request/response models
 └── exceptions/              # Custom exceptions and their HTTP handlers
 
@@ -304,10 +309,20 @@ tests/unit/                  # pytest unit tests, one file per service plus conf
 - **The vector store never embeds.** `InMemoryVectorStore` receives the
   `ChunkEmbedding`s that `EmbeddingService` already produced, normalizes them
   once, and ranks chunks by exact cosine similarity with NumPy. Search takes a
-  query vector, an optional `document_id` filter and `k`; equal scores keep
+  `QueryEmbedding`, an optional `document_id` filter and `k`; equal scores keep
   insertion order, so results are deterministic. It rejects mismatched or
-  duplicate chunk ids, mixed models or dimensions, and empty, zero or
-  non-finite vectors with `ValueError`, and a rejected batch stores nothing.
+  duplicate chunk ids, mixed models or dimensions, a query from a different
+  model than the stored vectors, and empty, zero or non-finite vectors with
+  `ValueError`, and a rejected batch stores nothing.
+- **Retrieval depends only on interfaces.** `RetrievalService` trims and
+  validates the question (empty or longer than 2000 characters raises
+  `InvalidQuestionError`, HTTP 400, before the provider is called), embeds it
+  with `EmbeddingService.embed_query`, and returns the vector store's top
+  `RETRIEVAL_TOP_K` results, optionally for one `document_id`. It uses only
+  `EmbeddingServiceInterface` and `VectorStoreInterface`, so a database-backed
+  vector store can replace `InMemoryVectorStore` without changing it. An
+  unknown `document_id` returns no results; checking that the document exists
+  is left to the caller.
 - **Errors are domain exceptions.** Services raise exceptions such as
   `FileTooLargeError` or `EmbeddingError`; handlers in
   `exceptions/handlers.py` map them to HTTP status codes.
@@ -350,8 +365,7 @@ uvx ruff format --check src tests
 
 ## Roadmap
 
-- Semantic retrieval: embed a question with the same model and find the most
-  similar chunks.
+- An HTTP endpoint for retrieval / questions.
 - LLM question answering over the retrieved chunks (`QuestionRequest` and
   `QuestionResponse` in `schemas/question.py` are already defined for this).
 - A document detail endpoint (`DocumentDetailResponse` is already defined).

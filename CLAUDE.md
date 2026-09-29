@@ -50,7 +50,17 @@ text and doesn't use LangChain. Vectors are normalized to float32 on add; equal 
 insertion order. Invalid input (id/model/dimension mismatch, duplicate ids, empty, zero or
 non-finite vectors, `k <= 0`) raises `ValueError`.
 
-Not built yet: query embedding / retrieval service, LLM Q&A. `schemas/question.py` and
+Retrieval (`services/retrieval_service.py`, `RetrievalService.retrieve(question,
+document_id=None)`): strips and validates the question (`InvalidQuestionError`, 400, raised
+before the provider is called), then `EmbeddingService.embed_query` → `vector_store.search`
+with `RETRIEVAL_TOP_K`. `embed_query` returns a `QueryEmbedding` carrying the model name and
+the store rejects a query from a model other than the stored one, so retrieval and upload
+must share one `EmbeddingService`. Returns `SearchResult` as-is; vectors never leave it.
+It depends only on the two Protocols, so a DB-backed store must not require changes here.
+An unknown `document_id` returns `[]`; the future Q&A caller should check the document
+exists (404) before retrieving. Retrieval isn't wired into `dependencies.py` or any route yet.
+
+Not built yet: retrieval/Q&A endpoint, LLM Q&A. `schemas/question.py` and
 `DocumentDetailResponse` are unused placeholders for that.
 
 ## Testing conventions

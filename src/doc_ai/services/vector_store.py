@@ -2,7 +2,7 @@ import numpy as np
 import numpy.typing as npt
 
 from doc_ai.models.chunk import Chunk
-from doc_ai.models.embedding import ChunkEmbedding
+from doc_ai.models.embedding import ChunkEmbedding, QueryEmbedding
 from doc_ai.models.search import SearchResult
 
 
@@ -42,19 +42,20 @@ class InMemoryVectorStore:
 
     async def search(
         self,
-        query_vector: list[float],
+        query: QueryEmbedding,
         k: int,
         document_id: int | None = None,
     ) -> list[SearchResult]:
         if k <= 0:
             raise ValueError("k must be greater than 0")
 
-        query = _unit_vectors([query_vector])[0]
+        query_vector = _unit_vectors([query.vector])[0]
 
         if not self._chunks:
             return []
 
-        self._check_dimension(query.shape[0])
+        self._check_query_model(query.model)
+        self._check_dimension(query_vector.shape[0])
 
         if document_id is None:
             candidates = np.arange(len(self._chunks))
@@ -62,7 +63,7 @@ class InMemoryVectorStore:
             candidates = np.flatnonzero(self._document_ids == document_id)
 
         # Rounding can push float32 cosine values just outside [-1, 1].
-        scores = np.clip(self._vectors[candidates] @ query, -1.0, 1.0)
+        scores = np.clip(self._vectors[candidates] @ query_vector, -1.0, 1.0)
         top = np.argsort(-scores, kind="stable")[:k]
 
         return [
@@ -104,6 +105,12 @@ class InMemoryVectorStore:
             )
 
         return model
+
+    def _check_query_model(self, model: str) -> None:
+        if model != self._model:
+            raise ValueError(
+                f"Query model {model} does not match stored model {self._model}"
+            )
 
     def _check_dimension(self, dimension: int) -> None:
         if self._chunks and dimension != self._vectors.shape[1]:

@@ -4,7 +4,7 @@ from langchain_openai import OpenAIEmbeddings
 from doc_ai.core.config import Settings
 from doc_ai.exceptions.embedding import EmbeddingError
 from doc_ai.models.chunk import Chunk
-from doc_ai.models.embedding import ChunkEmbedding
+from doc_ai.models.embedding import ChunkEmbedding, QueryEmbedding
 
 
 class EmbeddingService:
@@ -32,6 +32,17 @@ class EmbeddingService:
             ChunkEmbedding(chunk_id=chunk.id, vector=vector, model=self.model)
             for chunk, vector in zip(chunks, vectors, strict=True)
         ]
+
+    async def embed_query(self, text: str) -> QueryEmbedding:
+        try:
+            vector = await self.embeddings.aembed_query(text)
+        except Exception as error:
+            raise EmbeddingError("Embedding provider failed") from error
+
+        if not vector:
+            raise EmbeddingError("Embedding provider returned an empty vector")
+
+        return QueryEmbedding(vector=vector, model=self.model)
 
 
 def create_openai_embedding_service(settings: Settings) -> EmbeddingService:

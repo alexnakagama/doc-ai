@@ -13,10 +13,12 @@ from doc_ai.exceptions.handlers import (
     empty_file_handler,
     file_too_large_handler,
     invalid_pdf_handler,
+    invalid_question_handler,
     unsupported_encoding_handler,
     unsupported_file_type_handler,
 )
 from doc_ai.exceptions.pdf import InvalidPDFError
+from doc_ai.exceptions.question import InvalidQuestionError
 from doc_ai.exceptions.text import UnsupportedEncodingError
 from doc_ai.routers.documents import router as documents_router
 
@@ -35,5 +37,7 @@ app.add_exception_handler(UnsupportedEncodingError, unsupported_encoding_handler
 app.add_exception_handler(DocumentNotFoundError, document_not_found_handler)
 
 app.add_exception_handler(EmbeddingError, embedding_error_handler)
+
+app.add_exception_handler(InvalidQuestionError, invalid_question_handler)
 
 app.include_router(documents_router)

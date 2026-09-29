@@ -53,3 +53,26 @@ def test_embedding_settings_read_from_env(monkeypatch):
 
     assert settings.embedding_model == "text-embedding-3-large"
     assert settings.openai_api_key == "sk-test"
+
+
+def test_retrieval_settings_have_defaults(monkeypatch):
+    monkeypatch.delenv("RETRIEVAL_TOP_K", raising=False)
+
+    settings = Settings()
+
+    assert settings.retrieval_top_k == 4
+    assert settings.max_question_length == 2000
+
+
+def test_retrieval_top_k_reads_from_env(monkeypatch):
+    monkeypatch.setenv("RETRIEVAL_TOP_K", "8")
+
+    assert Settings().retrieval_top_k == 8
+
+
+@pytest.mark.parametrize("top_k", ["0", "-1"])
+def test_non_positive_retrieval_top_k_raises(monkeypatch, top_k):
+    monkeypatch.setenv("RETRIEVAL_TOP_K", top_k)
+
+    with pytest.raises(ValueError, match="RETRIEVAL_TOP_K"):
+        Settings()

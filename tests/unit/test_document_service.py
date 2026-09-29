@@ -15,7 +15,7 @@ from doc_ai.exceptions.document import (
 )
 from doc_ai.exceptions.embedding import EmbeddingError
 from doc_ai.models.chunk import Chunk
-from doc_ai.models.embedding import ChunkEmbedding
+from doc_ai.models.embedding import ChunkEmbedding, QueryEmbedding
 from doc_ai.services.chunking_service import ChunkingService
 from doc_ai.services.document_service import DocumentService
 from doc_ai.services.embedding_service import EmbeddingService
@@ -53,6 +53,10 @@ def make_service(
         ),
         vector_store or InMemoryVectorStore(),
     )
+
+
+def make_query(vector: list[float]) -> QueryEmbedding:
+    return QueryEmbedding(vector=vector, model="fake-model")
 
 
 def make_upload(filename: str, content: bytes) -> UploadFile:
@@ -158,7 +162,7 @@ async def test_upload_makes_chunks_searchable():
     embeddings = await service.get_embeddings(document.id)
 
     results = await vector_store.search(
-        embeddings[1].vector, k=len(chunks), document_id=document.id
+        make_query(embeddings[1].vector), k=len(chunks), document_id=document.id
     )
 
     assert results[0].chunk == chunks[1]
@@ -176,7 +180,7 @@ async def test_embedding_failure_stores_nothing():
     assert await service.get_documents() == []
     with pytest.raises(DocumentNotFoundError):
         await service.get_chunks(1)
-    assert await vector_store.search([1.0] * 8, k=1) == []
+    assert await vector_store.search(make_query([1.0] * 8), k=1) == []
 
 
 async def test_vector_store_rejection_stores_nothing():
@@ -202,7 +206,9 @@ async def test_vector_store_rejection_stores_nothing():
     assert await service.get_documents() == []
     with pytest.raises(DocumentNotFoundError):
         await service.get_chunks(1)
-    results = await vector_store.search([1.0] * 8, k=5)
+    results = await vector_store.search(
+        QueryEmbedding(vector=[1.0] * 8, model="other-model"), k=5
+    )
     assert [result.chunk for result in results] == [existing]
 
 
@@ -225,5 +231,7 @@ async def test_concurrent_uploads_get_distinct_ids():
     assert (await service.get_chunks(second.id))[0].content == "second file"
     for document in (first, second):
         [chunk] = await service.get_chunks(document.id)
-        results = await vector_store.search([1.0] * 8, k=5, document_id=document.id)
+        results = await vector_store.search(
+            make_query([1.0] * 8), k=5, document_id=document.id
+        )
         assert [result.chunk for result in results] == [chunk]

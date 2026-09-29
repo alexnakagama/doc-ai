@@ -28,6 +28,14 @@ class SingleVectorEmbeddings(Embeddings):
         return [0.0, 1.0]
 
 
+class EmptyVectorEmbeddings(Embeddings):
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [[] for _ in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return []
+
+
 def make_chunk(chunk_index: int, content: str) -> Chunk:
     return Chunk(
         id=f"1-{chunk_index}",
@@ -81,6 +89,32 @@ async def test_wrong_number_of_vectors_raises_embedding_error():
 
     with pytest.raises(EmbeddingError):
         await service.embed_chunks(chunks)
+
+
+async def test_query_gets_the_same_vector_as_a_chunk_with_the_same_text():
+    service = make_service()
+
+    query = await service.embed_query("same text")
+    [chunk_embedding] = await service.embed_chunks([make_chunk(0, "same text")])
+
+    assert query.vector == chunk_embedding.vector
+    assert query.model == "fake-model"
+
+
+async def test_query_provider_error_raises_embedding_error_with_cause():
+    service = EmbeddingService(FailingEmbeddings(), model="fake-model")
+
+    with pytest.raises(EmbeddingError) as error:
+        await service.embed_query("question")
+
+    assert isinstance(error.value.__cause__, RuntimeError)
+
+
+async def test_empty_query_vector_raises_embedding_error():
+    service = EmbeddingService(EmptyVectorEmbeddings(), model="fake-model")
+
+    with pytest.raises(EmbeddingError):
+        await service.embed_query("question")
 
 
 def test_openai_factory_requires_api_key(monkeypatch):

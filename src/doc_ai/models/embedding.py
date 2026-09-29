@@ -5,3 +5,8 @@ class ChunkEmbedding(BaseModel):
     chunk_id: str
     vector: list[float]
     model: str
+
+
+class QueryEmbedding(BaseModel):
+    vector: list[float]
+    model: str

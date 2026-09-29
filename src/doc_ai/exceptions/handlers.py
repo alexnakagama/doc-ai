@@ -11,6 +11,7 @@ from doc_ai.exceptions.document import (
 )
 from doc_ai.exceptions.embedding import EmbeddingError
 from doc_ai.exceptions.pdf import InvalidPDFError
+from doc_ai.exceptions.question import InvalidQuestionError
 from doc_ai.exceptions.text import UnsupportedEncodingError
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,12 @@ async def document_not_found_handler(
     request: Request, error: DocumentNotFoundError
 ) -> JSONResponse:
     return JSONResponse(status_code=404, content={"detail": str(error)})
+
+
+async def invalid_question_handler(
+    request: Request, error: InvalidQuestionError
+) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"detail": str(error)})
 
 
 async def embedding_error_handler(
