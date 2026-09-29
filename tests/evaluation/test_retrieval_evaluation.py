@@ -23,6 +23,15 @@ def test_corpus_chunk_ids_and_questions_are_unique():
     assert len({case.question for case in CASES}) == len(CASES)
 
 
+def test_dataset_has_answerable_and_unanswerable_questions():
+    assert sum(case.answerable for case in CASES) == 7
+    assert [case.question for case in CASES if not case.answerable] == [
+        "What are the store's opening hours?",
+        "Does the company offer international phone support?",
+        "How many days of paid vacation do employees get?",
+    ]
+
+
 def test_bag_of_words_embeddings_score_shared_words_only():
     embeddings = BagOfWordsEmbeddings()
 
@@ -42,6 +51,7 @@ async def test_synthetic_dataset_produces_the_expected_metrics():
     service = await build_retrieval_service(BagOfWordsEmbeddings())
 
     results = await run_evaluation(service, CASES)
+    summary = aggregate_results(results, KS)
 
     # Misses: "close my profile" shares no word with any chunk, and 4-0 says
     # "accept", not "accepted", so it falls outside the top 4 for its question.
@@ -53,8 +63,13 @@ async def test_synthetic_dataset_produces_the_expected_metrics():
         "1-0",
         "4-1",
         "4-1",
+        "1-0",
+        "1-0",
+        "1-1",
     ]
-    assert [metrics.model_dump() for metrics in aggregate_results(results, KS)] == [
+    assert summary.answerable_cases == 7
+    assert summary.unanswerable_cases == 3
+    assert [metrics.model_dump() for metrics in summary.metrics_at_k] == [
         pytest.approx(
             {"k": 1, "recall": 5.5 / 7, "precision": 6 / 7, "hit_rate": 6 / 7}
         ),
@@ -65,6 +80,24 @@ async def test_synthetic_dataset_produces_the_expected_metrics():
             {"k": 4, "recall": 5.5 / 7, "precision": 1.5 / 7, "hit_rate": 6 / 7}
         ),
     ]
+    # Vector search always returns its nearest neighbours.
+    assert summary.empty_retrieval_rate == 0.0
+    # Lowest relevant: 1-1 for "money back" (1 shared word of 3 and 11).
+    # Highest unanswerable: 1-1 for "paid vacation" (shares "paid" and "days"),
+    # so with this fake no score cut-off separates the two groups.
+    assert summary.lowest_relevant_score == pytest.approx(1 / (11 * 3) ** 0.5, abs=1e-6)
+    assert summary.highest_unanswerable_score == pytest.approx(
+        2 / (11 * 6) ** 0.5, abs=1e-6
+    )
+
+
+async def test_unanswerable_questions_without_shared_words_score_zero():
+    service = await build_retrieval_service(BagOfWordsEmbeddings())
+    cases = [case for case in CASES if not case.answerable][:2]
+
+    for result in await run_evaluation(service, cases):
+        assert result.relevant_chunk_ids == set()
+        assert result.retrieved_scores == [0.0] * max(KS)
 
 
 async def test_evaluation_runs_on_the_production_retrieval_components():
@@ -82,8 +115,13 @@ async def test_evaluation_runs_on_the_production_retrieval_components():
     for result in first:
         assert len(result.retrieved_chunk_ids) == max(KS)
         assert set(result.retrieved_chunk_ids) <= corpus_ids
+        assert result.retrieved_scores == sorted(result.retrieved_scores, reverse=True)
 
-    for metrics in aggregate_results(first, KS):
+    summary = aggregate_results(first, KS)
+    assert summary.answerable_cases == 7
+    assert summary.unanswerable_cases == 3
+    assert summary.empty_retrieval_rate == 0.0
+    for metrics in summary.metrics_at_k:
         assert 0.0 <= metrics.recall <= 1.0
         assert 0.0 <= metrics.precision <= 1.0
         assert 0.0 <= metrics.hit_rate <= 1.0

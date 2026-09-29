@@ -510,17 +510,40 @@ answer came from the wrong chunks or from the model, and gives a baseline
 before changing retrieval (for example adding a relevance threshold).
 
 `tests/evaluation/` holds a small synthetic corpus (refunds, shipping, account
-cancellation, payment methods) and questions whose relevant chunk ids are set
-by hand. Each question goes through the real `RetrievalService` and
-`InMemoryVectorStore`, and the retrieved chunk ids are compared with the
-expected ones for K = 1, 2 and 4, averaged over all questions:
+cancellation, payment methods) and two kinds of questions:
+
+- **Answerable** questions, with the relevant chunk ids set by hand.
+- **Unanswerable** questions (opening hours, phone support, employee
+  vacation), marked `answerable=False` with no relevant chunks, because
+  nothing in the corpus answers them.
+
+Unanswerable questions matter because vector search always returns its K
+nearest chunks, even when none of them is related. The LLM then gets
+unrelated text and has to recognise that on its own. Measuring these cases
+shows whether irrelevant nearest neighbours could be told apart from real
+matches (for example by score) before deciding whether to filter them.
+
+Each question goes through the real `RetrievalService` and
+`InMemoryVectorStore`. For answerable questions, the retrieved chunk ids are
+compared with the expected ones for K = 1, 2 and 4, averaged over the
+answerable questions only:
 
 - **Recall@K**: the share of a question's relevant chunks found in the top K.
 - **Precision@K**: the share of the top K results that are relevant (divided
   by the number of results if fewer than K came back).
 - **Hit rate@K**: 1 if at least one relevant chunk is in the top K, else 0.
 
-Print the per-question results and the metrics table:
+Unanswerable questions are kept out of those averages (they have no relevant
+chunks, so recall and precision are undefined for them) and measured with:
+
+- **Empty retrieval rate**: the share of unanswerable questions for which
+  retrieval returned no results.
+- **Scores**: the lowest score of a relevant chunk retrieved for an answerable
+  question, and the highest score retrieved for an unanswerable question. If
+  the first is clearly higher, a score cut-off could separate them; if not, it
+  couldn't.
+
+Print each question's retrieved chunks with their scores, and the summary:
 
 ```bash
 uv run python tests/evaluation/run_retrieval_evaluation.py
@@ -530,7 +553,8 @@ The evaluation is **deterministic and offline**: it uses a fake bag-of-words
 embedding (similar only when words are shared; no stemming or synonyms), so
 no API key or network is needed and the metrics are checked by the test
 suite. The numbers describe that fake, not OpenAI embeddings, and they are
-not a basis for tuning. Current results with the fake:
+not a basis for tuning. Current results with the fake (7 answerable, 3
+unanswerable questions):
 
 | K | Recall | Precision | Hit rate |
 | - | ------ | --------- | -------- |
@@ -538,10 +562,23 @@ not a basis for tuning. Current results with the fake:
 | 2 | 0.786  | 0.429     | 0.857    |
 | 4 | 0.786  | 0.214     | 0.857    |
 
-The misses are a paraphrase with no shared word ("close my profile") and a
-chunk that says "accept" where the question says "accepted". Precision drops
-with K because most questions have one relevant chunk and retrieval always
-returns K results. **No relevance threshold has been selected yet.**
+- Empty retrieval rate: 0.000
+- Lowest score of a retrieved relevant chunk: 0.174
+- Highest score retrieved for an unanswerable question: 0.246
+
+The answerable misses are a paraphrase with no shared word ("close my
+profile") and a chunk that says "accept" where the question says "accepted".
+Precision drops with K because most questions have one relevant chunk and
+retrieval always returns K results. Every unanswerable question still gets
+four chunks, and "How many days of paid vacation do employees get?" scores
+higher (it shares "paid" and "days" with a refund chunk) than one real match,
+so with this fake no single cut-off would separate the two groups.
+
+**No relevance threshold is used yet.** A threshold only makes sense on the
+scale of the real embedding model, and these fake scores say nothing about
+OpenAI's. A threshold chosen by intuition could drop real matches as easily as
+noise, so it waits until the same comparison has been made with real
+embeddings.
 
 ## Limitations
 

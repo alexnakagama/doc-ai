@@ -106,6 +106,17 @@ CASES = [
         question="Is cash on delivery accepted?",
         relevant_chunk_ids={"4-1"},
     ),
+    # Nothing in the corpus answers these.
+    EvaluationCase(question="What are the store's opening hours?", answerable=False),
+    EvaluationCase(
+        question="Does the company offer international phone support?",
+        answerable=False,
+    ),
+    # Shares "days" and "paid" with the refund chunks.
+    EvaluationCase(
+        question="How many days of paid vacation do employees get?",
+        answerable=False,
+    ),
 ]
 
 STOP_WORDS = {

@@ -1,8 +1,12 @@
 import pytest
+from pydantic import ValidationError
 from retrieval_metrics import (
     CaseResult,
+    EvaluationCase,
+    EvaluationSummary,
     MetricsAtK,
     aggregate_results,
+    calculate_empty_retrieval,
     calculate_hit_rate_at_k,
     calculate_precision_at_k,
     calculate_recall_at_k,
@@ -84,28 +88,119 @@ def test_recall_rejects_a_case_without_relevant_chunks():
         calculate_recall_at_k(["a"], set(), k=1)
 
 
+def result(
+    retrieved: list[str],
+    relevant: set[str] | None = None,
+    scores: list[float] | None = None,
+) -> CaseResult:
+    return CaseResult(
+        question="q",
+        answerable=bool(relevant),
+        relevant_chunk_ids=relevant or set(),
+        retrieved_chunk_ids=retrieved,
+        retrieved_scores=scores or [0.5] * len(retrieved),
+    )
+
+
+def test_answerable_case_is_the_default():
+    case = EvaluationCase(question="q", relevant_chunk_ids={"a"})
+
+    assert case.answerable
+
+
+def test_unanswerable_case_is_accepted_without_relevant_ids():
+    case = EvaluationCase(question="q", answerable=False)
+
+    assert case.relevant_chunk_ids == set()
+
+
+def test_answerable_case_requires_relevant_ids():
+    with pytest.raises(ValidationError, match="at least one relevant"):
+        EvaluationCase(question="q", relevant_chunk_ids=set())
+
+
+def test_unanswerable_case_rejects_relevant_ids():
+    with pytest.raises(ValidationError, match="must not have relevant"):
+        EvaluationCase(question="q", answerable=False, relevant_chunk_ids={"a"})
+
+
+def test_case_result_needs_one_score_per_retrieved_chunk():
+    with pytest.raises(ValidationError, match="one score per"):
+        CaseResult(
+            question="q",
+            relevant_chunk_ids={"a"},
+            retrieved_chunk_ids=["a", "b"],
+            retrieved_scores=[0.9],
+        )
+
+
+def test_empty_retrieval_is_one_only_without_results():
+    assert calculate_empty_retrieval([]) == 1.0
+    assert calculate_empty_retrieval(["a"]) == 0.0
+
+
 def test_aggregate_averages_each_metric_over_the_cases():
     results = [
-        CaseResult(
-            question="q1", retrieved_chunk_ids=["a", "x"], relevant_chunk_ids={"a"}
-        ),
-        CaseResult(
-            question="q2", retrieved_chunk_ids=["y", "b"], relevant_chunk_ids={"b", "c"}
-        ),
+        result(["a", "x"], {"a"}),
+        result(["y", "b"], {"b", "c"}),
     ]
 
-    assert aggregate_results(results, ks=[1, 2]) == [
+    assert aggregate_results(results, ks=[1, 2]).metrics_at_k == [
         MetricsAtK(k=1, recall=0.5, precision=0.5, hit_rate=0.5),
         MetricsAtK(k=2, recall=0.75, precision=0.5, hit_rate=1.0),
     ]
 
 
-def test_aggregate_is_deterministic():
-    results = [
-        CaseResult(
-            question="q", retrieved_chunk_ids=["a", "b", "x"], relevant_chunk_ids={"b"}
-        )
+def test_unanswerable_question_with_nearest_neighbours_is_not_an_empty_retrieval():
+    summary = aggregate_results([result(["a", "b"], scores=[0.4, 0.3])], ks=[1])
+
+    assert summary.unanswerable_cases == 1
+    assert summary.empty_retrieval_rate == 0.0
+    assert summary.highest_unanswerable_score == 0.4
+
+
+def test_mixed_dataset_keeps_unanswerable_cases_out_of_answerable_metrics():
+    answerable = [
+        result(["a", "x"], {"a"}, scores=[0.9, 0.3]),
+        result(["y", "b"], {"b", "c"}, scores=[0.5, 0.2]),
     ]
+    unanswerable = [
+        result([]),
+        result(["a", "b"], scores=[0.6, 0.1]),
+    ]
+
+    summary = aggregate_results(answerable + unanswerable, ks=[1, 2])
+
+    assert summary == EvaluationSummary(
+        answerable_cases=2,
+        unanswerable_cases=2,
+        metrics_at_k=aggregate_results(answerable, ks=[1, 2]).metrics_at_k,
+        empty_retrieval_rate=0.5,
+        lowest_relevant_score=0.2,
+        highest_unanswerable_score=0.6,
+    )
+
+
+def test_summary_of_answerable_cases_only_has_no_unanswerable_figures():
+    summary = aggregate_results([result(["x"], {"a"})], ks=[1])
+
+    assert summary.unanswerable_cases == 0
+    assert summary.empty_retrieval_rate is None
+    assert summary.highest_unanswerable_score is None
+    assert summary.lowest_relevant_score is None
+
+
+def test_summary_of_unanswerable_cases_only_has_no_answerable_metrics():
+    summary = aggregate_results([result([])], ks=[1])
+
+    assert summary.answerable_cases == 0
+    assert summary.metrics_at_k == []
+    assert summary.empty_retrieval_rate == 1.0
+    assert summary.highest_unanswerable_score is None
+
+
+def test_aggregate_is_deterministic():
+    results = [result(["a", "b", "x"], {"b"}), result(["x"])]
 
     assert aggregate_results(results, ks=[1, 2, 4]) == aggregate_results(
         results, ks=[1, 2, 4]
@@ -117,16 +212,53 @@ def test_aggregate_rejects_an_empty_dataset():
         aggregate_results([], ks=[1])
 
 
-def test_report_lists_every_metric_for_every_k():
+def test_report_separates_answerable_and_unanswerable_cases():
     report = format_report(
-        [
-            MetricsAtK(k=1, recall=0.5, precision=0.5, hit_rate=0.5),
-            MetricsAtK(k=4, recall=1.0, precision=0.25, hit_rate=1.0),
-        ]
+        EvaluationSummary(
+            answerable_cases=2,
+            unanswerable_cases=1,
+            metrics_at_k=[
+                MetricsAtK(k=1, recall=0.5, precision=0.5, hit_rate=0.5),
+                MetricsAtK(k=4, recall=1.0, precision=0.25, hit_rate=1.0),
+            ],
+            empty_retrieval_rate=0.0,
+            lowest_relevant_score=0.25,
+            highest_unanswerable_score=0.375,
+        )
     )
 
     assert report.splitlines() == [
+        "Answerable cases: 2",
+        "Unanswerable cases: 1",
+        "",
+        "Answerable questions",
         "  K  Recall  Precision  Hit rate",
         "  1   0.500      0.500     0.500",
         "  4   1.000      0.250     1.000",
+        "",
+        "Unanswerable questions",
+        "  Empty retrieval rate: 0.000",
+        "",
+        "Scores",
+        "  Lowest score of a retrieved relevant chunk: 0.250",
+        "  Highest score retrieved for an unanswerable question: 0.375",
     ]
+
+
+def test_report_shows_missing_figures_as_not_available():
+    report = format_report(
+        EvaluationSummary(
+            answerable_cases=0,
+            unanswerable_cases=1,
+            metrics_at_k=[],
+            empty_retrieval_rate=1.0,
+            lowest_relevant_score=None,
+            highest_unanswerable_score=None,
+        )
+    )
+
+    assert "  Lowest score of a retrieved relevant chunk: n/a" in report.splitlines()
+    assert (
+        "  Highest score retrieved for an unanswerable question: n/a"
+        in report.splitlines()
+    )

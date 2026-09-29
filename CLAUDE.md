@@ -91,6 +91,9 @@ unused placeholder.
 
 - `tests/evaluation/` measures retrieval quality (Recall/Precision/Hit rate@K) over a
   synthetic corpus with hand-picked relevant chunk ids and a bag-of-words fake embedding.
+  Unanswerable questions use `EvaluationCase(answerable=False)` with no relevant ids (an
+  empty set alone is rejected); they are excluded from Recall/Precision/Hit rate and
+  measured by empty retrieval rate and scores instead.
   It stays out of `src/` and doesn't change production code; helper modules there
   (`retrieval_metrics`, `retrieval_dataset`) are imported by bare name, which works
   because `tests/` has no `__init__.py` (pytest puts the test's directory on `sys.path`).
