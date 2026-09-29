@@ -22,6 +22,7 @@ stops.
 - [Project structure](#project-structure)
 - [Architecture](#architecture)
 - [Development](#development)
+- [Retrieval evaluation](#retrieval-evaluation)
 - [Limitations](#limitations)
 - [Roadmap](#roadmap)
 
@@ -415,6 +416,7 @@ src/doc_ai/
 
 tests/unit/                  # pytest tests: one file per service, plus config, handlers,
                              # the /questions API and import boundaries
+tests/evaluation/            # Retrieval evaluation: metrics, synthetic dataset, report script
 ```
 
 ## Architecture
@@ -499,6 +501,47 @@ Lint and format check with [Ruff](https://docs.astral.sh/ruff/), run through
 uvx ruff check src tests
 uvx ruff format --check src tests
 ```
+
+## Retrieval evaluation
+
+An answer can only be as good as the chunks it is built from, so retrieval is
+measured on its own, before the LLM is involved. That tells you whether a bad
+answer came from the wrong chunks or from the model, and gives a baseline
+before changing retrieval (for example adding a relevance threshold).
+
+`tests/evaluation/` holds a small synthetic corpus (refunds, shipping, account
+cancellation, payment methods) and questions whose relevant chunk ids are set
+by hand. Each question goes through the real `RetrievalService` and
+`InMemoryVectorStore`, and the retrieved chunk ids are compared with the
+expected ones for K = 1, 2 and 4, averaged over all questions:
+
+- **Recall@K**: the share of a question's relevant chunks found in the top K.
+- **Precision@K**: the share of the top K results that are relevant (divided
+  by the number of results if fewer than K came back).
+- **Hit rate@K**: 1 if at least one relevant chunk is in the top K, else 0.
+
+Print the per-question results and the metrics table:
+
+```bash
+uv run python tests/evaluation/run_retrieval_evaluation.py
+```
+
+The evaluation is **deterministic and offline**: it uses a fake bag-of-words
+embedding (similar only when words are shared; no stemming or synonyms), so
+no API key or network is needed and the metrics are checked by the test
+suite. The numbers describe that fake, not OpenAI embeddings, and they are
+not a basis for tuning. Current results with the fake:
+
+| K | Recall | Precision | Hit rate |
+| - | ------ | --------- | -------- |
+| 1 | 0.786  | 0.857     | 0.857    |
+| 2 | 0.786  | 0.429     | 0.857    |
+| 4 | 0.786  | 0.214     | 0.857    |
+
+The misses are a paraphrase with no shared word ("close my profile") and a
+chunk that says "accept" where the question says "accepted". Precision drops
+with K because most questions have one relevant chunk and retrieval always
+returns K results. **No relevance threshold has been selected yet.**
 
 ## Limitations
 

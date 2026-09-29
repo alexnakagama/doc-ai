@@ -89,6 +89,13 @@ unused placeholder.
 
 ## Testing conventions
 
+- `tests/evaluation/` measures retrieval quality (Recall/Precision/Hit rate@K) over a
+  synthetic corpus with hand-picked relevant chunk ids and a bag-of-words fake embedding.
+  It stays out of `src/` and doesn't change production code; helper modules there
+  (`retrieval_metrics`, `retrieval_dataset`) are imported by bare name, which works
+  because `tests/` has no `__init__.py` (pytest puts the test's directory on `sys.path`).
+  If you edit the dataset, update the metrics pinned in `test_retrieval_evaluation.py`.
+  Report: `uv run python tests/evaluation/run_retrieval_evaluation.py`.
 - Async tests use `pytestmark = pytest.mark.anyio` (the anyio plugin ships with FastAPI;
   there is no pytest-asyncio).
 - Tests use real services rather than mocks. Embeddings use LangChain's
