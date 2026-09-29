@@ -3,7 +3,12 @@ import logging
 import pytest
 
 from doc_ai.exceptions.embedding import EmbeddingError
-from doc_ai.exceptions.handlers import embedding_error_handler, invalid_question_handler
+from doc_ai.exceptions.handlers import (
+    embedding_error_handler,
+    invalid_question_handler,
+    llm_error_handler,
+)
+from doc_ai.exceptions.llm import LLMError
 from doc_ai.exceptions.question import InvalidQuestionError
 
 pytestmark = pytest.mark.anyio
@@ -32,3 +37,19 @@ async def test_invalid_question_returns_400_with_its_message():
 
     assert response.status_code == 400
     assert response.body == b'{"detail":"Question must not be empty"}'
+
+
+async def test_llm_error_is_logged_with_its_cause_and_returns_502(caplog):
+    try:
+        raise LLMError("Language model provider failed") from RuntimeError(
+            "insufficient_quota"
+        )
+    except LLMError as caught:
+        error = caught
+
+    with caplog.at_level(logging.ERROR):
+        response = await llm_error_handler(None, error)
+
+    assert response.status_code == 502
+    assert b"insufficient_quota" not in response.body
+    assert "insufficient_quota" in caplog.text

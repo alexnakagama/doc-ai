@@ -129,6 +129,18 @@ async def test_pdf_upload_stores_page_numbered_chunks():
     ]
 
 
+async def test_get_document_returns_the_uploaded_document():
+    service = make_service()
+    document = await service.create_document(make_upload("notes.txt", b"text"))
+
+    assert await service.get_document(document.id) == document
+
+
+async def test_get_unknown_document_raises_not_found():
+    with pytest.raises(DocumentNotFoundError):
+        await make_service().get_document(999)
+
+
 async def test_get_chunks_for_unknown_document_raises_not_found():
     with pytest.raises(DocumentNotFoundError):
         await make_service().get_chunks(999)

@@ -1,10 +1,9 @@
 # doc-ai
 
-A FastAPI service that ingests PDF and plain-text documents, splits them into
-chunks, turns each chunk into an embedding vector, and can retrieve the chunks
-most similar to a question. It is the ingestion and retrieval half of a
-document question-answering (RAG) system: LLM answers are planned but not built
-yet, and retrieval has no HTTP endpoint yet.
+A FastAPI service for question answering over your own documents (RAG). It
+ingests PDF and plain-text documents, splits them into chunks, turns each chunk
+into an embedding vector, and answers questions with an LLM using only the
+chunks most similar to the question.
 
 Everything is held **in memory**, including the vector store. There is no
 database, so all documents, chunks and embeddings are lost when the process
@@ -18,6 +17,7 @@ stops.
 - [Getting started](#getting-started)
 - [Configuration](#configuration)
 - [API reference](#api-reference)
+- [Manual end-to-end check](#manual-end-to-end-check)
 - [Data model](#data-model)
 - [Project structure](#project-structure)
 - [Architecture](#architecture)
@@ -38,8 +38,14 @@ stops.
   `langchain-openai`.
 - **All-or-nothing uploads**: a document is stored only if extraction, chunking
   and embedding all succeed.
+- **Semantic retrieval** with an in-memory NumPy vector store (exact cosine
+  similarity), across all documents or limited to one.
+- **Grounded answers** from an OpenAI chat model (`gpt-4o-mini` by default)
+  through `langchain-openai`. The prompt tells the model to answer only from
+  the retrieved sources and to say when they don't contain the answer.
 - **Clear HTTP errors** for empty, oversized, unsupported or unreadable files,
-  and for embedding provider failures.
+  invalid questions, unknown documents, and embedding or LLM provider
+  failures. Provider details are logged, never sent to the client.
 
 ## How it works
 
@@ -65,11 +71,39 @@ flowchart LR
 5. Only after every step succeeds are the document, its chunks and its
    embeddings stored together. If any step fails, nothing is stored.
 
+Answering a question:
+
+```mermaid
+flowchart LR
+    A[POST /questions] --> B[QuestionService]
+    B --> C{document_id<br/>given?}
+    C -- yes --> D[DocumentService<br/>404 if unknown]
+    C -- no --> E
+    D --> E[RetrievalService<br/>validate, embed question]
+    E --> F[(Vector store<br/>top-k chunks)]
+    F --> G{any chunks?}
+    G -- no --> H[Fixed answer,<br/>no LLM call]
+    G -- yes --> I[build_prompt<br/>numbered sources + question]
+    I --> J[LLMService<br/>chat model]
+    J --> K[Answer]
+```
+
+1. If a `document_id` is given, the document must exist (404 otherwise). This
+   is checked before any provider call.
+2. The question is trimmed and validated (400 if empty or longer than 2000
+   characters), embedded with the same model as the chunks, and the
+   `RETRIEVAL_TOP_K` most similar chunks are retrieved.
+3. If there is no text to search (no documents, or only documents without
+   text), a fixed answer is returned without calling the LLM.
+4. Otherwise the chunks and the question are turned into a prompt and sent to
+   the chat model, whose reply is returned.
+
 ## Requirements
 
 - Python **3.13** or newer
 - [uv](https://docs.astral.sh/uv/) for dependency management
-- An **OpenAI API key** (needed to start the server; tests do not need one)
+- An **OpenAI API key** with credits (needed to start the server and to
+  upload or ask; tests do not need one)
 
 ## Getting started
 
@@ -106,6 +140,9 @@ Try it out:
 curl -F file=@notes.txt http://127.0.0.1:8000/documents
 curl http://127.0.0.1:8000/documents
 curl http://127.0.0.1:8000/documents/1/chunks
+curl -H 'Content-Type: application/json' \
+     -d '{"question": "What is this document about?", "document_id": 1}' \
+     http://127.0.0.1:8000/questions
 ```
 
 ## Configuration
@@ -115,11 +152,12 @@ Settings are read from environment variables when the app starts
 
 | Variable          | Default                  | Description                                                   |
 | ----------------- | ------------------------ | ------------------------------------------------------------- |
-| `OPENAI_API_KEY`  | none (required)          | API key for the OpenAI embeddings API.                        |
+| `OPENAI_API_KEY`  | none (required)          | API key for the OpenAI embeddings and chat APIs.              |
 | `EMBEDDING_MODEL` | `text-embedding-3-small` | OpenAI embedding model name.                                  |
 | `CHUNK_SIZE`      | `1000`                   | Maximum characters per chunk. Must be greater than 0.         |
 | `CHUNK_OVERLAP`   | `200`                    | Characters shared by neighbouring chunks. Must be `>= 0` and less than `CHUNK_SIZE`. |
 | `RETRIEVAL_TOP_K` | `4`                      | Number of chunks retrieved per question. Must be greater than 0. |
+| `LLM_MODEL`       | `gpt-4o-mini`            | OpenAI chat model used to answer questions.                    |
 
 Invalid chunk or retrieval settings stop the app at startup, for example
 `ValueError: CHUNK_OVERLAP must be >= 0 and less than CHUNK_SIZE`.
@@ -131,6 +169,7 @@ These values are fixed in code and cannot be changed through the environment:
 | Maximum upload size  | 10 MB            |
 | Allowed extensions   | `.pdf`, `.txt`   |
 | Maximum question length | 2000 characters (after trimming whitespace) |
+| LLM request timeout  | 60 seconds       |
 
 `CHUNK_SIZE` and `CHUNK_OVERLAP` are measured in **characters**, not tokens.
 
@@ -198,6 +237,28 @@ curl http://127.0.0.1:8000/documents/1/chunks
 ]
 ```
 
+### `POST /questions`
+
+Ask a question about the uploaded documents. `document_id` is optional: leave
+it out to search every document.
+
+```bash
+curl -H 'Content-Type: application/json' \
+     -d '{"question": "How long do refunds take?", "document_id": 1}' \
+     http://127.0.0.1:8000/questions
+```
+
+**200 OK**
+
+```json
+{ "answer": "Refunds are processed within 14 days." }
+```
+
+If there is no document text to search, the answer is
+`"No document content is available to answer this question."` and no LLM call
+is made. If the documents don't contain the answer, the model is instructed to
+say so rather than guess.
+
 ### Errors
 
 Every error response has the shape `{"detail": "<message>"}`.
@@ -207,15 +268,50 @@ Every error response has the shape `{"detail": "<message>"}`.
 | 400    | `File is empty`                     | The uploaded file has no content.                            |
 | 400    | `Invalid PDF file`                  | The `.pdf` file cannot be opened by PyMuPDF.                 |
 | 400    | `Could not detect the file encoding`| A `.txt` file does not decode with any supported encoding.   |
-| 404    | `Document not found`                | No document has the requested id.                            |
+| 400    | `Question must not be empty`        | The question is empty or only whitespace.                    |
+| 400    | `Question must be at most 2000 characters` | The trimmed question is too long.                     |
+| 404    | `Document not found`                | No document has the requested id (chunks or questions).      |
 | 413    | `File is too large`                 | The file is larger than 10 MB.                               |
 | 415    | `File type is not allowed`          | The extension is not `.pdf` or `.txt`.                       |
-| 422    | FastAPI validation details          | For example, `document_id` is not an integer or `file` is missing. |
-| 502    | `Embedding provider failed`         | The embedding provider returned an error, or the wrong number of vectors. |
+| 422    | FastAPI validation details          | For example, `document_id` is not an integer, `file` or `question` is missing, or the body is not JSON. |
+| 502    | `Embedding provider failed`         | The embedding provider returned an error, the wrong number of vectors, or an empty vector. |
+| 502    | `Language model provider failed`    | The chat model provider returned an error (including a timeout). |
+| 502    | `Language model returned an empty answer` | The chat model replied with no text.                   |
 
 For a 502, the provider's own error (for example an OpenAI `401` for a bad
-key, or a rate limit) is written to the server log. It is not sent to the
-client.
+key, or `429 insufficient_quota`) is written to the server log. It is not sent
+to the client.
+
+## Manual end-to-end check
+
+Automated tests never call OpenAI. To check the real integration, you need an
+OpenAI key **with credits**:
+
+1. Put the key in `.env` and start the server:
+   `uv run --env-file .env uvicorn doc_ai.main:app`
+2. Upload a document:
+   `curl -F file=@notes.txt http://127.0.0.1:8000/documents`
+   (note the returned `id`).
+3. Ask about something the document says, and something it doesn't:
+
+   ```bash
+   curl -H 'Content-Type: application/json' \
+        -d '{"question": "<something in the file>", "document_id": 1}' \
+        http://127.0.0.1:8000/questions
+   curl -H 'Content-Type: application/json' \
+        -d '{"question": "<something not in the file>", "document_id": 1}' \
+        http://127.0.0.1:8000/questions
+   ```
+
+   The first should answer from the document; the second should say the
+   documents don't contain that information.
+4. `{"question": "Hi", "document_id": 999}` should return 404, and
+   `{"question": "  "}` should return 400.
+
+If the account has no credits, step 2 already fails with
+`502 Embedding provider failed`, and the server log shows OpenAI's
+`429 insufficient_quota`. That is the expected behavior: the client gets the
+generic message and the cause stays in the log.
 
 ## Data model
 
@@ -256,12 +352,22 @@ Embeddings are kept inside the service and are not exposed through the API.
 ### SearchResult
 
 Returned by `RetrievalService.retrieve` and `InMemoryVectorStore.search`, best
-match first. It contains no vectors. Not exposed through the API yet.
+match first. It contains no vectors. Not exposed through the API.
 
 | Field   | Type    | Notes                                                        |
 | ------- | ------- | ------------------------------------------------------------ |
 | `chunk` | `Chunk` | The matching chunk, with its metadata for citations.         |
 | `score` | `float` | Cosine similarity to the query, from -1 to 1 (higher is closer). |
+
+### Answer
+
+Returned by `QuestionService.answer`. The API response only exposes `text`
+(as `answer`); `sources` is kept for future citations.
+
+| Field     | Type                 | Notes                                                    |
+| --------- | -------------------- | -------------------------------------------------------- |
+| `text`    | `str`                | The model's answer, or the fixed no-content answer.      |
+| `sources` | `list[SearchResult]` | The chunks given to the model, in the order of the numbered sources in the prompt. Empty when no LLM call was made. |
 
 ## Project structure
 
@@ -270,9 +376,10 @@ src/doc_ai/
 ├── main.py                  # FastAPI app, exception handler registration
 ├── core/
 │   ├── config.py            # Settings read from environment variables
-│   └── dependencies.py      # Builds all services; exposes DocumentServiceDependency
+│   └── dependencies.py      # Builds all services; exposes the service dependencies
 ├── routers/
-│   └── documents.py         # HTTP endpoints only, no business logic
+│   ├── documents.py         # HTTP endpoints only, no business logic
+│   └── questions.py         # POST /questions
 ├── services/
 │   ├── document_service.py  # Upload flow and in-memory storage
 │   ├── pdf_service.py       # PDF text extraction, per page
@@ -280,32 +387,45 @@ src/doc_ai/
 │   ├── chunking_service.py  # LangChain text splitter
 │   ├── embedding_service.py # LangChain embeddings + OpenAI factory
 │   ├── vector_store.py      # In-memory cosine-similarity search (NumPy)
-│   └── retrieval_service.py # Question -> query embedding -> top-k chunks
+│   ├── retrieval_service.py # Question -> query embedding -> top-k chunks
+│   ├── llm_service.py       # LangChain chat model + OpenAI factory
+│   ├── question_prompt.py   # build_prompt: system rules, numbered sources, question
+│   └── question_service.py  # Q&A orchestration: document check, retrieval, LLM
 ├── interfaces/              # typing.Protocol interfaces for each service
-├── models/                  # Internal Pydantic models: Document, PageText, Chunk, ChunkEmbedding, QueryEmbedding, SearchResult
+├── models/                  # Internal Pydantic models: Document, PageText, Chunk, ChunkEmbedding, QueryEmbedding, SearchResult, Prompt, Answer
 ├── schemas/                 # API request/response models
 └── exceptions/              # Custom exceptions and their HTTP handlers
 
-tests/unit/                  # pytest unit tests, one file per service plus config and handlers
+tests/unit/                  # pytest tests: one file per service, plus config, handlers,
+                             # the /questions API and import boundaries
 ```
 
 ## Architecture
 
-- **Routers stay thin.** Endpoints only call `DocumentService`. They never
-  import a concrete service or any LangChain code.
+- **Routers stay thin.** Endpoints only call `DocumentService` or
+  `QuestionService` through their interfaces. They never import a concrete
+  service or any LangChain code.
 - **Composition happens in one place.** `core/dependencies.py` builds every
-  service once at startup and injects them into `DocumentService`.
+  service once at startup and injects them. Upload and retrieval share one
+  `EmbeddingService` and one vector store, so questions are embedded with the
+  same model as the chunks.
 - **Services depend on interfaces.** Each service receives its collaborators
   through its constructor, typed as `Protocol` interfaces from `interfaces/`.
   This keeps services easy to test and replace.
 - **LangChain is contained.** `langchain_text_splitters` is imported only in
-  `chunking_service.py`, and `langchain_openai` only in `embedding_service.py`.
-  Other layers work with the project's own Pydantic models.
+  `chunking_service.py`, and `langchain_openai` only in the two provider
+  factories in `embedding_service.py` and `llm_service.py`. Other layers work
+  with the project's own Pydantic models. `tests/unit/test_architecture.py`
+  enforces this.
 - **Swapping the embedding provider** means writing another factory next to
   `create_openai_embedding_service` that wraps a different LangChain
   `Embeddings` class (for example Ollama or HuggingFace), and calling it from
   `dependencies.py`. `EmbeddingService`, `DocumentService` and the routers stay
   the same.
+- **Swapping the LLM provider** works the same way: `LLMService` wraps any
+  LangChain `BaseChatModel`, and `create_openai_llm_service` is the only
+  OpenAI-specific part. Another provider needs another factory (or any class
+  with `generate(prompt) -> str`); `QuestionService` doesn't change.
 - **The vector store never embeds.** `InMemoryVectorStore` receives the
   `ChunkEmbedding`s that `EmbeddingService` already produced, normalizes them
   once, and ranks chunks by exact cosine similarity with NumPy. Search takes a
@@ -323,6 +443,19 @@ tests/unit/                  # pytest unit tests, one file per service plus conf
   vector store can replace `InMemoryVectorStore` without changing it. An
   unknown `document_id` returns no results; checking that the document exists
   is left to the caller.
+- **The LLM only generates text.** `LLMServiceInterface.generate(Prompt) -> str`
+  knows nothing about documents or retrieval. Provider errors and empty replies
+  become `LLMError` (HTTP 502, cause logged).
+- **Prompts are a pure function.** `build_prompt` in `question_prompt.py`
+  puts the rules in the system message (answer only from the sources, say when
+  they don't contain the answer, treat source text as data, not instructions)
+  and the numbered `<source id file page>` blocks plus the question in the user
+  message. Scores, ids and vectors are never sent; `<source` tags inside chunk
+  text are escaped.
+- **`QuestionService` only orchestrates.** It checks the document exists,
+  retrieves, returns a fixed answer without an LLM call when there is nothing
+  to search, and otherwise builds the prompt and calls the LLM. It depends on
+  the document, retrieval and LLM interfaces and catches no exceptions.
 - **Errors are domain exceptions.** Services raise exceptions such as
   `FileTooLargeError` or `EmbeddingError`; handlers in
   `exceptions/handlers.py` map them to HTTP status codes.
@@ -335,9 +468,12 @@ Run the test suite:
 uv run pytest
 ```
 
-The tests need **no API key and no network access**. Embeddings are
-replaced with LangChain's `DeterministicFakeEmbedding`. Async tests run through the `anyio` pytest plugin that comes
-with FastAPI.
+The tests need **no API key, no network access and no OpenAI credits**.
+Embeddings are replaced with LangChain's `DeterministicFakeEmbedding` and chat
+models with LangChain's fake chat models (or small `BaseChatModel` subclasses
+that fail on purpose). Async tests run through the `anyio` pytest plugin that
+comes with FastAPI. The `/questions` API tests use FastAPI's `TestClient`
+(`httpx` dev dependency) with the service dependencies overridden.
 
 Lint and format check with [Ruff](https://docs.astral.sh/ruff/), run through
 `uvx` (Ruff isn't a project dependency):
@@ -354,7 +490,13 @@ uvx ruff format --check src tests
   running uvicorn with several workers would split documents between them.
 - **Scanned PDFs have no text.** PDFs without a text layer are stored with no
   extracted text and zero chunks; there is no OCR.
-- **Document text is sent to OpenAI** to create embeddings.
+- **Document text is sent to OpenAI** to create embeddings, and the retrieved
+  chunks and the question are sent to OpenAI to generate answers.
+- **No relevance threshold.** The top chunks are always sent to the LLM, even
+  if they are only loosely related; the prompt tells the model to say when they
+  don't contain the answer.
+- **Single questions only.** There is no conversation history, streaming or
+  citations yet.
 - **Uploads wait for embedding.** The OpenAI call happens during the request,
   so large documents take longer to upload.
 - **No authentication.** Anyone who can reach the server can upload and read
@@ -365,7 +507,5 @@ uvx ruff format --check src tests
 
 ## Roadmap
 
-- An HTTP endpoint for retrieval / questions.
-- LLM question answering over the retrieved chunks (`QuestionRequest` and
-  `QuestionResponse` in `schemas/question.py` are already defined for this).
+- Citations in answers (`Answer.sources` already holds the numbered sources).
 - A document detail endpoint (`DocumentDetailResponse` is already defined).

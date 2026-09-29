@@ -6,9 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - Install: `uv sync`
 - Run: `uv run --env-file .env uvicorn doc_ai.main:app --reload` — requires `OPENAI_API_KEY`;
-  `core/dependencies.py` builds the OpenAI embedding service at import time, so the app
-  (and any `import doc_ai.main`) fails without it. Copy `.env.example` to `.env`.
-- Tests: `uv run pytest` (no API key or network needed)
+  `core/dependencies.py` builds the OpenAI embedding and chat services at import time, so
+  the app (and any `import doc_ai.main` or `doc_ai.core.dependencies`) fails without it.
+  Copy `.env.example` to `.env`.
+- Tests: `uv run pytest` (no API key, network or OpenAI credits needed). The real OpenAI
+  flow is only checked manually; see "Manual end-to-end check" in README.md.
 - Single test: `uv run pytest tests/unit/test_chunking_service.py -k test_name`
   (async tests get an `[asyncio]` id suffix, so `-k` is easier than `::name`)
 - Lint/format: `uvx ruff check src tests` and `uvx ruff format --check src tests`
@@ -31,18 +33,21 @@ Upload flow (`DocumentService.create_document`): validate → extract → chunk 
 Layering:
 - Services take their collaborators through the constructor, typed as `Protocol`s from
   `interfaces/`. All composition happens in `core/dependencies.py`; routers only use
-  `DocumentServiceDependency` and must not construct services or import LangChain.
+  `DocumentServiceDependency` / `QuestionServiceDependency` and must not construct services
+  or import LangChain.
 - LangChain is confined: `langchain_text_splitters` only in `services/chunking_service.py`,
-  `langchain_openai` only in `create_openai_embedding_service` in
-  `services/embedding_service.py`. Other layers use the project's own models.
+  `langchain_openai` only in the factories `create_openai_embedding_service`
+  (`services/embedding_service.py`) and `create_openai_llm_service`
+  (`services/llm_service.py`). Other layers use the project's own models.
+  `tests/unit/test_architecture.py` enforces this with an AST import check.
 - `models/` holds internal Pydantic models; `schemas/` holds API response models.
   Embedding vectors are deliberately not exposed through the API.
 - Errors are domain exceptions in `exceptions/`. A new one needs a handler in
-  `exceptions/handlers.py` and registration in `main.py`. The `EmbeddingError` handler logs
-  the provider's cause and returns only a generic message to the client.
+  `exceptions/handlers.py` and registration in `main.py`. The `EmbeddingError` and
+  `LLMError` handlers log the provider's cause and return only a generic message (502).
 - `Settings` (`core/config.py`) is a plain class that reads `os.getenv` when instantiated.
   It must not require `OPENAI_API_KEY`, because the tests import it; the key is checked in
-  the embedding factory instead. Invalid chunk settings raise at startup.
+  the provider factories instead. Invalid chunk/retrieval settings raise at startup.
 
 Vector store (`services/vector_store.py`, `InMemoryVectorStore`): exact cosine search
 with NumPy (a runtime dependency) over the precomputed `ChunkEmbedding`s; it never embeds
@@ -57,21 +62,41 @@ with `RETRIEVAL_TOP_K`. `embed_query` returns a `QueryEmbedding` carrying the mo
 the store rejects a query from a model other than the stored one, so retrieval and upload
 must share one `EmbeddingService`. Returns `SearchResult` as-is; vectors never leave it.
 It depends only on the two Protocols, so a DB-backed store must not require changes here.
-An unknown `document_id` returns `[]`; the future Q&A caller should check the document
-exists (404) before retrieving. Retrieval isn't wired into `dependencies.py` or any route yet.
+An unknown `document_id` returns `[]`; `QuestionService` does the 404 check.
 
-Not built yet: retrieval/Q&A endpoint, LLM Q&A. `schemas/question.py` and
-`DocumentDetailResponse` are unused placeholders for that.
+Q&A flow (`POST /questions` → `QuestionService.answer(question, document_id=None)` →
+`Answer(text, sources)`; the API returns only `{"answer": text}`):
+- If `document_id` is set, `DocumentService.get_document` runs first (404 before any paid
+  provider call). Then retrieval. If retrieval returns `[]` (nothing to search), it returns
+  `NO_CONTENT_ANSWER` without calling the LLM. Otherwise `build_prompt` → `LLMService`.
+  It catches no exceptions; the existing handlers map them (400/404/502).
+- `LLMServiceInterface.generate(Prompt) -> str` is provider-agnostic: `LLMService` wraps
+  any LangChain `BaseChatModel`, and `create_openai_llm_service` (`LLM_MODEL`, fixed 60 s
+  timeout) is the only OpenAI part. It knows nothing about retrieval or documents.
+- `build_prompt` (`services/question_prompt.py`) is a pure function, not a service: system
+  = grounding rules, user = numbered `<source id file [page]>` blocks + the question. Never
+  send scores, ids or vectors; `<source` tags inside chunk text are escaped. The source
+  numbers match `Answer.sources` order, for future citations.
+- `QuestionRequest` has no validation constraints on purpose: `RetrievalService` is the
+  single question validator, so every invalid question gets 400 (not a mix of 400 and 422).
+
+Not built yet: citations, streaming, conversation history. `DocumentDetailResponse` is an
+unused placeholder.
 
 ## Testing conventions
 
 - Async tests use `pytestmark = pytest.mark.anyio` (the anyio plugin ships with FastAPI;
   there is no pytest-asyncio).
 - Tests use real services rather than mocks. Embeddings use LangChain's
-  `DeterministicFakeEmbedding` or small `Embeddings`
-  subclasses defined in the test file. PDFs are generated inside tests with pymupdf.
-- There are no HTTP-level tests (`httpx` isn't installed). Exception handlers are tested by
-  calling the handler functions directly.
+  `DeterministicFakeEmbedding` or small `Embeddings` subclasses defined in the test file;
+  chat models use LangChain's `FakeListChatModel` / `ParrotFakeChatModel` (echoes the
+  prompt) or small `BaseChatModel` subclasses. A fake that raises when called proves a
+  provider was not reached. PDFs are generated inside tests with pymupdf.
+- HTTP tests (`test_questions_router.py`) use `TestClient` (`httpx` dev dependency). They
+  import `doc_ai.main` / `doc_ai.core.dependencies` inside a fixture after patching
+  `settings.openai_api_key` (patching the env var is too late: `settings` is created on
+  first import of `core.config`), then replace both service dependencies via
+  `app.dependency_overrides`. Exception handlers are also tested directly.
 
 ## Development Instructions
 

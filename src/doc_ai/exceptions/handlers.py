@@ -10,6 +10,7 @@ from doc_ai.exceptions.document import (
     UnsupportedFileTypeError,
 )
 from doc_ai.exceptions.embedding import EmbeddingError
+from doc_ai.exceptions.llm import LLMError
 from doc_ai.exceptions.pdf import InvalidPDFError
 from doc_ai.exceptions.question import InvalidQuestionError
 from doc_ai.exceptions.text import UnsupportedEncodingError
@@ -59,4 +60,9 @@ async def embedding_error_handler(
     request: Request, error: EmbeddingError
 ) -> JSONResponse:
     logger.error("Embedding request failed", exc_info=error)
+    return JSONResponse(status_code=502, content={"detail": str(error)})
+
+
+async def llm_error_handler(request: Request, error: LLMError) -> JSONResponse:
+    logger.error("Language model request failed", exc_info=error)
     return JSONResponse(status_code=502, content={"detail": str(error)})

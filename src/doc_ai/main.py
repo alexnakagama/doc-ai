@@ -14,13 +14,16 @@ from doc_ai.exceptions.handlers import (
     file_too_large_handler,
     invalid_pdf_handler,
     invalid_question_handler,
+    llm_error_handler,
     unsupported_encoding_handler,
     unsupported_file_type_handler,
 )
+from doc_ai.exceptions.llm import LLMError
 from doc_ai.exceptions.pdf import InvalidPDFError
 from doc_ai.exceptions.question import InvalidQuestionError
 from doc_ai.exceptions.text import UnsupportedEncodingError
 from doc_ai.routers.documents import router as documents_router
+from doc_ai.routers.questions import router as questions_router
 
 app = FastAPI()
 
@@ -40,4 +43,8 @@ app.add_exception_handler(EmbeddingError, embedding_error_handler)
 
 app.add_exception_handler(InvalidQuestionError, invalid_question_handler)
 
+app.add_exception_handler(LLMError, llm_error_handler)
+
 app.include_router(documents_router)
+
+app.include_router(questions_router)

@@ -76,3 +76,18 @@ def test_non_positive_retrieval_top_k_raises(monkeypatch, top_k):
 
     with pytest.raises(ValueError, match="RETRIEVAL_TOP_K"):
         Settings()
+
+
+def test_llm_settings_have_defaults(monkeypatch):
+    monkeypatch.delenv("LLM_MODEL", raising=False)
+
+    settings = Settings()
+
+    assert settings.llm_model == "gpt-4o-mini"
+    assert settings.llm_timeout_seconds == 60
+
+
+def test_llm_model_reads_from_env(monkeypatch):
+    monkeypatch.setenv("LLM_MODEL", "gpt-4.1-mini")
+
+    assert Settings().llm_model == "gpt-4.1-mini"

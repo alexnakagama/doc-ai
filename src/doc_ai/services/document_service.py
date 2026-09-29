@@ -45,6 +45,13 @@ class DocumentService:
     async def get_documents(self) -> list[Document]:
         return self.documents
 
+    async def get_document(self, document_id: int) -> Document:
+        for document in self.documents:
+            if document.id == document_id:
+                return document
+
+        raise DocumentNotFoundError("Document not found")
+
     async def get_chunks(self, document_id: int) -> list[Chunk]:
         if document_id not in self.chunks:
             raise DocumentNotFoundError("Document not found")

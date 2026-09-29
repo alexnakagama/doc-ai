@@ -11,6 +11,8 @@ class Settings:
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         self.retrieval_top_k = int(os.getenv("RETRIEVAL_TOP_K", "4"))
         self.max_question_length = 2000
+        self.llm_model = os.getenv("LLM_MODEL", "gpt-4o-mini")
+        self.llm_timeout_seconds = 60
 
         if self.chunk_size <= 0:
             raise ValueError("CHUNK_SIZE must be greater than 0")

@@ -2,8 +2,8 @@ from pydantic import BaseModel
 
 
 class QuestionRequest(BaseModel):
-    document_id: int
     question: str
+    document_id: int | None = None
 
 
 class QuestionResponse(BaseModel):
