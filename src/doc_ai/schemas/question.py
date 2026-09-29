@@ -6,5 +6,11 @@ class QuestionRequest(BaseModel):
     document_id: int | None = None
 
 
+class SourceResponse(BaseModel):
+    filename: str
+    page_number: int | None
+
+
 class QuestionResponse(BaseModel):
     answer: str
+    sources: list[SourceResponse]

@@ -65,7 +65,7 @@ It depends only on the two Protocols, so a DB-backed store must not require chan
 An unknown `document_id` returns `[]`; `QuestionService` does the 404 check.
 
 Q&A flow (`POST /questions` → `QuestionService.answer(question, document_id=None)` →
-`Answer(text, sources)`; the API returns only `{"answer": text}`):
+`Answer(text, sources)`; the API returns `{"answer": text, "sources": [...]}`):
 - If `document_id` is set, `DocumentService.get_document` runs first (404 before any paid
   provider call). Then retrieval. If retrieval returns `[]` (nothing to search), it returns
   `NO_CONTENT_ANSWER` without calling the LLM. Otherwise `build_prompt` → `LLMService`.
@@ -77,10 +77,14 @@ Q&A flow (`POST /questions` → `QuestionService.answer(question, document_id=No
   = grounding rules, user = numbered `<source id file [page]>` blocks + the question. Never
   send scores, ids or vectors; `<source` tags inside chunk text are escaped. The source
   numbers match `Answer.sources` order, for future citations.
+- The router maps each `SearchResult` in `Answer.sources` to a `SourceResponse`
+  (`filename`, `page_number` only), keeping retrieval order. Never expose `SearchResult`,
+  scores, ids, chunk indexes, start indexes or vectors from this endpoint. The mapping is
+  an HTTP concern and stays out of `QuestionService`.
 - `QuestionRequest` has no validation constraints on purpose: `RetrievalService` is the
   single question validator, so every invalid question gets 400 (not a mix of 400 and 422).
 
-Not built yet: citations, streaming, conversation history. `DocumentDetailResponse` is an
+Not built yet: inline citations in the answer text, streaming, conversation history. `DocumentDetailResponse` is an
 unused placeholder.
 
 ## Testing conventions

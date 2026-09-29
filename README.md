@@ -43,6 +43,8 @@ stops.
 - **Grounded answers** from an OpenAI chat model (`gpt-4o-mini` by default)
   through `langchain-openai`. The prompt tells the model to answer only from
   the retrieved sources and to say when they don't contain the answer.
+- **Sources in every answer**: the response lists the filename and page number
+  of each chunk the model was given, in retrieval order.
 - **Clear HTTP errors** for empty, oversized, unsupported or unreadable files,
   invalid questions, unknown documents, and embedding or LLM provider
   failures. Provider details are logged, never sent to the client.
@@ -85,7 +87,7 @@ flowchart LR
     G -- no --> H[Fixed answer,<br/>no LLM call]
     G -- yes --> I[build_prompt<br/>numbered sources + question]
     I --> J[LLMService<br/>chat model]
-    J --> K[Answer]
+    J --> K[Answer +<br/>sources]
 ```
 
 1. If a `document_id` is given, the document must exist (404 otherwise). This
@@ -96,7 +98,8 @@ flowchart LR
 3. If there is no text to search (no documents, or only documents without
    text), a fixed answer is returned without calling the LLM.
 4. Otherwise the chunks and the question are turned into a prompt and sent to
-   the chat model, whose reply is returned.
+   the chat model. Its reply is returned with the filename and page number of
+   each chunk that was in the prompt.
 
 ## Requirements
 
@@ -251,12 +254,25 @@ curl -H 'Content-Type: application/json' \
 **200 OK**
 
 ```json
-{ "answer": "Refunds are processed within 14 days." }
+{
+  "answer": "Refunds are processed within 14 days.",
+  "sources": [
+    { "filename": "report.pdf", "page_number": 2 },
+    { "filename": "notes.txt", "page_number": null }
+  ]
+}
 ```
 
+`sources` lists the document filename and page number of every chunk that was
+sent to the model, in retrieval order (most similar first), so it matches the
+numbered sources in the prompt. A document with several matching chunks
+appears once per chunk. `page_number` is `null` for `.txt` documents. Scores,
+ids, chunk text and vectors are not included. `sources` shows what the model
+was given; the answer itself doesn't cite individual sources yet.
+
 If there is no document text to search, the answer is
-`"No document content is available to answer this question."` and no LLM call
-is made. If the documents don't contain the answer, the model is instructed to
+`"No document content is available to answer this question."`, `sources` is
+`[]` and no LLM call is made. If the documents don't contain the answer, the model is instructed to
 say so rather than guess.
 
 ### Errors
@@ -361,8 +377,9 @@ match first. It contains no vectors. Not exposed through the API.
 
 ### Answer
 
-Returned by `QuestionService.answer`. The API response only exposes `text`
-(as `answer`); `sources` is kept for future citations.
+Returned by `QuestionService.answer`. The questions router turns it into the
+API response: `text` becomes `answer`, and each `SearchResult` in `sources`
+becomes a `SourceResponse` with only the chunk's `filename` and `page_number`.
 
 | Field     | Type                 | Notes                                                    |
 | --------- | -------------------- | -------------------------------------------------------- |
@@ -495,8 +512,9 @@ uvx ruff format --check src tests
 - **No relevance threshold.** The top chunks are always sent to the LLM, even
   if they are only loosely related; the prompt tells the model to say when they
   don't contain the answer.
-- **Single questions only.** There is no conversation history, streaming or
-  citations yet.
+- **Single questions only.** There is no conversation history or streaming.
+- **No inline citations.** `sources` lists every chunk given to the model; the
+  answer text doesn't say which of them it used.
 - **Uploads wait for embedding.** The OpenAI call happens during the request,
   so large documents take longer to upload.
 - **No authentication.** Anyone who can reach the server can upload and read
@@ -507,5 +525,6 @@ uvx ruff format --check src tests
 
 ## Roadmap
 
-- Citations in answers (`Answer.sources` already holds the numbered sources).
+- Inline citations in answers (the prompt's source numbers already match the
+  order of `sources`).
 - A document detail endpoint (`DocumentDetailResponse` is already defined).
